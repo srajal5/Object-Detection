@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { supabase } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
@@ -11,13 +10,17 @@ export default function Navbar() {
 
   const handleSignOut = async () => {
     try {
-      const { error } = await supabase.auth.signOut();
-      if (error) {
-        toast.error(error.message || "Failed to sign out");
-        return;
-      }
+      // First, clear the auth cookie
+      document.cookie = "token=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
+      
+      // Show success message
       toast.success("Signed out successfully");
-      router.push("/");
+      
+      // Small delay to ensure cookie is cleared
+      setTimeout(() => {
+        // Redirect to login page
+        window.location.href = "/auth/login";
+      }, 100);
     } catch (error) {
       toast.error("An unexpected error occurred");
       console.error(error);

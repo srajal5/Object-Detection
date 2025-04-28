@@ -25,6 +25,8 @@ interface DetectionSettingsFormData {
   ntfyPriority: string;
   enableLogging: boolean;
   enablePersonDetection: boolean;
+  streamQuality: number;
+  frameBufferSize: number;
 }
 
 export default function DetectionSettings() {
@@ -40,6 +42,8 @@ export default function DetectionSettings() {
       ntfyPriority: "default",
       enableLogging: false,
       enablePersonDetection: true,
+      streamQuality: 80,
+      frameBufferSize: 10,
     },
   });
 
@@ -117,6 +121,8 @@ export default function DetectionSettings() {
               "enablePersonDetection",
               data.enable_person_detection !== false
             ); // Default to true if not set
+            form.setValue("streamQuality", data.stream_quality || 80);
+            form.setValue("frameBufferSize", data.frame_buffer_size || 10);
           }
         }
       } catch (error) {
@@ -245,6 +251,8 @@ export default function DetectionSettings() {
         ntfy_priority: data.ntfyPriority,
         enable_logging: data.enableLogging,
         enable_person_detection: data.enablePersonDetection,
+        stream_quality: data.streamQuality,
+        frame_buffer_size: data.frameBufferSize,
       });
 
       if (error) {
@@ -349,7 +357,7 @@ export default function DetectionSettings() {
                 className="h-full object-contain"
                 style={{
                   maxHeight: "400px",
-                  imageRendering: "optimizeSpeed",
+                  imageRendering: "auto",
                 }}
                 loading="eager"
               />
@@ -405,6 +413,55 @@ export default function DetectionSettings() {
                 )}
               />
             </div>
+
+            {/* IP Camera Advanced Settings */}
+            <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+              <FormField
+                control={form.control}
+                name="streamQuality"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Stream Quality</FormLabel>
+                    <FormControl>
+                      <Input
+                        type="number"
+                        min="1"
+                        max="100"
+                        {...field}
+                        onChange={(e) => field.onChange(parseInt(e.target.value))}
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      JPEG quality for IP camera streams (1-100)
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="frameBufferSize"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Frame Buffer Size</FormLabel>
+                    <FormControl>
+                      <Input
+                        type="number"
+                        min="1"
+                        max="30"
+                        {...field}
+                        onChange={(e) => field.onChange(parseInt(e.target.value))}
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      Number of frames to buffer (1-30)
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+
             <div className="my-4 text-sm text-gray-500 dark:text-gray-400">
               <p>Supported formats:</p>
               <ul className="list-disc list-inside ml-2 mt-1">

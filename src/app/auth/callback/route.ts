@@ -1,18 +1,23 @@
-import { createClient } from "@supabase/supabase-js";
-import { NextRequest, NextResponse } from "next/server";
+import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { cookies } from 'next/headers';
+import { NextResponse } from 'next/server';
 
-export async function GET(request: NextRequest) {
+export async function GET(request: Request) {
   const requestUrl = new URL(request.url);
-  const code = requestUrl.searchParams.get("code");
+  const code = requestUrl.searchParams.get('code');
 
   if (code) {
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
-    const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
-    const supabase = createClient(supabaseUrl, supabaseAnonKey);
-
-    await supabase.auth.exchangeCodeForSession(code);
+    const cookieStore = cookies();
+    const supabase = createRouteHandlerClient({ cookies: () => cookieStore });
+    
+    try {
+      await supabase.auth.exchangeCodeForSession(code);
+    } catch (error) {
+      console.error('Error exchanging code for session:', error);
+      return NextResponse.redirect(`${requestUrl.origin}/auth/login?error=verification_failed`);
+    }
   }
 
   // URL to redirect to after sign in process completes
-  return NextResponse.redirect(new URL("/dashboard", request.url));
+  return NextResponse.redirect(requestUrl.origin);
 }

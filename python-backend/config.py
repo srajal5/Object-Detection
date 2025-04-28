@@ -6,6 +6,7 @@ load_dotenv()
 
 # API Configuration
 FLASK_PORT = int(os.getenv('FLASK_PORT', 5000))
+FLASK_HOST = os.getenv('FLASK_HOST', '0.0.0.0')
 DEBUG = os.getenv('DEBUG', 'True').lower() in ('true', '1', 't')
 
 # Model Configuration
@@ -21,4 +22,7 @@ STREAM_BUFFER_SIZE = int(os.getenv('STREAM_BUFFER_SIZE', 10))
 DETECTION_INTERVAL = float(os.getenv('DETECTION_INTERVAL', 1.0))
 
 # NTFY Configuration
-NTFY_BASE_URL = os.getenv('NTFY_BASE_URL', 'https://ntfy.sh') 
+NTFY_BASE_URL = os.getenv('NTFY_BASE_URL', 'https://ntfy.sh')
+
+# Frontend URL for live feed
+FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:3000') 

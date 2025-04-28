@@ -12,7 +12,6 @@ import {
   FormLabel,
   FormMessage,
 } from "@/components/ui/form";
-import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 
@@ -20,6 +19,7 @@ interface RegisterFormData {
   email: string;
   password: string;
   confirmPassword: string;
+  name?: string;
 }
 
 export default function RegisterForm() {
@@ -31,6 +31,7 @@ export default function RegisterForm() {
       email: "",
       password: "",
       confirmPassword: "",
+      name: "",
     },
   });
 
@@ -45,24 +46,26 @@ export default function RegisterForm() {
 
     setIsLoading(true);
     try {
-      const { error } = await supabase.auth.signUp({
-        email: data.email,
-        password: data.password,
-        options: {
-          emailRedirectTo: `${window.location.origin}/auth/callback`,
+      const response = await fetch('/api/auth/register', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
         },
+        body: JSON.stringify({
+          email: data.email,
+          password: data.password,
+          name: data.name,
+        }),
       });
 
-      if (error) {
-        toast.error(error.message || "Failed to register");
-        return;
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.message || 'Registration failed');
       }
 
-      // In development with mock auth, we'll redirect to login immediately
-      toast.success(
-        "Registration successful! Please check your email to verify your account."
-      );
-
+      toast.success("Registration successful! Please log in.");
+      
       // Redirect to login page after a short delay
       setTimeout(() => {
         router.push("/auth/login");
@@ -80,6 +83,19 @@ export default function RegisterForm() {
   return (
     <Form {...form}>
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+        <FormField
+          control={form.control}
+          name="name"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Name (Optional)</FormLabel>
+              <FormControl>
+                <Input placeholder="Your name" {...field} />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
         <FormField
           control={form.control}
           name="email"

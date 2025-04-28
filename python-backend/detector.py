@@ -34,6 +34,19 @@ class ObjectDetector:
         self.enable_person_detection = True  # Default to enabled
         self.last_heartbeat = 0  # Heartbeat timestamp
         self.heartbeat_interval = 5  # Seconds between heartbeats
+        self.detected_persons = {}  # Track unique person detections
+        self.person_detection_threshold = 0.7  # Confidence threshold for person detection
+        self.person_tracking_timeout = 300  # 5 minutes to keep tracking a person before considering them "new" again
+        self.last_notification_sent = 0  # Track when we last sent any notification
+        self.min_notification_interval = 10  # Minimum seconds between notifications
+        # IP Webcam specific settings
+        self.is_ip_camera = False
+        self.reconnect_attempts = 0
+        self.max_reconnect_attempts = 5
+        self.reconnect_delay = 2  # seconds between reconnection attempts
+        self.stream_quality = 80  # JPEG quality for IP camera streams (0-100)
+        self.frame_buffer_size = 10  # Number of frames to buffer for IP cameras
+        self.frame_buffer = []
         
     def heartbeat(self):
         """Update the heartbeat timestamp to indicate the detector is still alive"""
@@ -87,22 +100,33 @@ class ObjectDetector:
                 webcam_index = int(camera_url.replace('webcam://', '') or 0)
                 logger.info(f"Using local webcam with index: {webcam_index}")
                 self.stream_url = webcam_index
+                self.is_ip_camera = False
             except ValueError:
                 logger.error(f"Invalid webcam index: {camera_url.replace('webcam://', '')}")
                 self.stream_url = 0
+                self.is_ip_camera = False
         # Form the stream URL based on protocol
         elif camera_url.startswith(('rtmp://', 'srt://')):
             # For RTMP and SRT, use the URL as is or append port if specified
             self.stream_url = f"{camera_url}:{camera_port}" if camera_port and ':' not in camera_url else camera_url
+            self.is_ip_camera = False
         elif not camera_url.startswith(('http://', 'https://')):
             # For HTTP streams without protocol prefix, add it
             camera_url = f"http://{camera_url}"
             self.stream_url = f"{camera_url}:{camera_port}" if camera_port else camera_url
+            self.is_ip_camera = True
         else:
             # For URLs with protocol already specified
             self.stream_url = f"{camera_url}:{camera_port}" if camera_port and ':' not in camera_url else camera_url
+            self.is_ip_camera = True
             
-        logger.info(f"Camera stream URL: {self.stream_url}")
+        logger.info(f"Camera stream URL: {self.stream_url} (IP Camera: {self.is_ip_camera})")
+        
+        # Set IP camera specific settings
+        if self.is_ip_camera:
+            self.stream_quality = settings.get('streamQuality', 80)
+            self.frame_buffer_size = settings.get('frameBufferSize', 10)
+            logger.info(f"IP Camera settings - Quality: {self.stream_quality}, Buffer Size: {self.frame_buffer_size}")
         
         self.ntfy_topic = settings.get('ntfyTopic')
         self.ntfy_priority = settings.get('ntfyPriority', 'default')
@@ -122,9 +146,20 @@ class ObjectDetector:
         try:
             logger.info(f"Opening video stream: {self.stream_url}")
             self.cap = cv2.VideoCapture(self.stream_url)
+            
+            # Set IP camera specific parameters
+            if self.is_ip_camera:
+                self.cap.set(cv2.CAP_PROP_BUFFERSIZE, self.frame_buffer_size)
+                # Try to set lower resolution for IP cameras to reduce bandwidth
+                self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+                self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            
             if not self.cap.isOpened():
                 logger.error("Failed to open video stream")
                 return False, "Failed to open video stream"
+                
+            # Reset reconnect attempts counter
+            self.reconnect_attempts = 0
         except Exception as e:
             logger.exception(f"Error opening video stream: {str(e)}")
             return False, f"Error opening video stream: {str(e)}"
@@ -160,8 +195,6 @@ class ObjectDetector:
         last_detection_time = 0
         consecutive_errors = 0
         max_consecutive_errors = 10  # Increased from 5 to be more tolerant of errors
-        reconnect_attempts = 0
-        max_reconnect_attempts = 5
 
         while self.is_running:
             try:
@@ -177,26 +210,38 @@ class ObjectDetector:
                     try:
                         if self.cap is not None:
                             self.cap.release()
+                        
+                        # For IP cameras, implement exponential backoff
+                        if self.is_ip_camera:
+                            wait_time = min(self.reconnect_delay * (2 ** self.reconnect_attempts), 30)
+                            logger.info(f"Waiting {wait_time} seconds before reconnection attempt {self.reconnect_attempts + 1}")
+                            time.sleep(wait_time)
+                        
                         self.cap = cv2.VideoCapture(self.stream_url)
+                        
+                        # Set IP camera specific parameters after reconnection
+                        if self.is_ip_camera:
+                            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, self.frame_buffer_size)
+                            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+                            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+                        
                         # Wait for connection to establish
-                        time.sleep(1)  
+                        time.sleep(1)
                         
                         # Check if reconnection was successful
                         if not self.cap.isOpened():
-                            reconnect_attempts += 1
-                            logger.error(f"Reconnection attempt {reconnect_attempts}/{max_reconnect_attempts} failed")
+                            self.reconnect_attempts += 1
+                            logger.error(f"Reconnection attempt {self.reconnect_attempts}/{self.max_reconnect_attempts} failed")
                             
-                            if reconnect_attempts >= max_reconnect_attempts:
-                                logger.error(f"Failed to reconnect after {max_reconnect_attempts} attempts, stopping detection")
-                                # Don't set is_running to False here - let the monitoring thread handle it
-                                # Instead, break out of the loop
+                            if self.reconnect_attempts >= self.max_reconnect_attempts:
+                                logger.error(f"Failed to reconnect after {self.max_reconnect_attempts} attempts, stopping detection")
+                                self.is_running = False
                                 break
                                 
-                            # Wait longer between reconnection attempts
-                            time.sleep(3)  
+                            continue
                         else:
                             # Reset counter on successful reconnection
-                            reconnect_attempts = 0
+                            self.reconnect_attempts = 0
                             logger.info("Successfully reconnected to camera")
                     except Exception as e:
                         logger.exception(f"Error reconnecting to camera: {str(e)}")
@@ -208,7 +253,7 @@ class ObjectDetector:
                 ret, frame = None, None
                 
                 try:
-                    # Set a timeout for frame reading (cv2 doesn't have built-in timeout)
+                    # Set a timeout for frame reading
                     start_time = time.time()
                     ret, frame = self.cap.read()
                     if time.time() - start_time > 10:  # If frame reading takes more than 10 seconds
@@ -257,6 +302,9 @@ class ObjectDetector:
                     # Create a copy of the frame for drawing boxes
                     frame_with_boxes = frame.copy()
                     
+                    # Initialize person counter
+                    person_count = 0
+                    
                     for r in results:
                         boxes = r.boxes
                         for box in boxes:
@@ -264,6 +312,14 @@ class ObjectDetector:
                                 cls_id = int(box.cls.item())
                                 conf = float(box.conf.item())
                                 cls_name = self.model.names[cls_id]
+                                
+                                # Only process person detections
+                                if cls_name.lower() != 'person':
+                                    continue
+                                    
+                                # Increment person counter
+                                person_count += 1
+                                    
                                 xyxy = box.xyxy.tolist()[0]  # Get box coordinates
                                 
                                 # Draw bounding box
@@ -284,6 +340,13 @@ class ObjectDetector:
                             except Exception as e:
                                 logger.error(f"Error processing detection box: {str(e)}")
                                 continue
+                    
+                    # Add timestamp and person count to the frame
+                    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    cv2.putText(frame_with_boxes, f"Time: {timestamp}", (10, 30), 
+                              cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                    cv2.putText(frame_with_boxes, f"People Detected: {person_count}", (10, 60), 
+                              cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                     
                     # Send frame to callback if available
                     if self.frame_callback and frame_with_boxes is not None:
@@ -309,7 +372,8 @@ class ObjectDetector:
                     # Send notifications and log detections
                     if detections:
                         try:
-                            self.process_detections(detections, frame)
+                            # Add person count to the notification
+                            self.process_detections(detections, frame, person_count)
                         except Exception as e:
                             logger.exception(f"Error processing detections: {str(e)}")
                 
@@ -332,24 +396,65 @@ class ObjectDetector:
         except Exception as e:
             logger.exception(f"Error releasing camera: {str(e)}")
 
-    def process_detections(self, detections, frame):
+    def is_new_person_detection(self, box, confidence):
+        """Check if this is a new person detection based on position and confidence"""
+        if confidence < self.person_detection_threshold:
+            return False
+            
+        # Get box coordinates
+        x1, y1, x2, y2 = box
+        
+        # Create a unique identifier for this detection
+        # Use the center point of the bounding box
+        center_x = (x1 + x2) / 2
+        center_y = (y1 + y2) / 2
+        
+        # Check if we've seen this person recently
+        current_time = time.time()
+        
+        # Check if we're sending notifications too frequently
+        if current_time - self.last_notification_sent < self.min_notification_interval:
+            return False
+            
+        # Check if this person matches any previously detected person
+        for person_id, (last_seen, pos) in list(self.detected_persons.items()):
+            last_x, last_y = pos
+            
+            # Calculate distance between current and last position
+            distance = ((center_x - last_x) ** 2 + (center_y - last_y) ** 2) ** 0.5
+            
+            # If person is close to a previously detected position and within timeout
+            if distance < 100 and current_time - last_seen < self.person_tracking_timeout:
+                # Update the last seen time and position
+                self.detected_persons[person_id] = (current_time, (center_x, center_y))
+                return False
+        
+        # This is a new person detection
+        person_id = f"person_{len(self.detected_persons)}"
+        self.detected_persons[person_id] = (current_time, (center_x, center_y))
+        self.last_notification_sent = current_time
+        return True
+
+    def process_detections(self, detections, frame, person_count):
         """Process detections by sending notifications and logging to Supabase"""
         current_time = time.time()
+        new_person_detected = False
         
         for detection in detections:
             object_class = detection['class']
             confidence = detection['confidence']
+            box = detection['box']
             
-            # Send priority notifications for person detections with cooldown
+            # Check for new person detections
             if object_class.lower() == 'person' and self.enable_person_detection:
-                last = self.last_notification_time.get(object_class, 0)
-                if self.ntfy_topic and (object_class not in self.last_notification_time or 
-                                         current_time - last > self.notification_cooldown):
-                    self.send_notification(object_class, confidence, is_priority=True)
-                    self.last_notification_time[object_class] = current_time
+                if self.is_new_person_detection(box, confidence):
+                    new_person_detected = True
+                    # Send notification for new person
+                    if self.ntfy_topic:
+                        self.send_notification(object_class, confidence, person_count, is_priority=True)
                     # Log person detection to Supabase if enabled
                     if self.enable_logging and self.supabase_url and self.supabase_key:
-                        self.log_detection(object_class, confidence)
+                        self.log_detection(object_class, confidence, person_count)
                 continue
             
             # For other objects, check the cooldown period
@@ -358,30 +463,43 @@ class ObjectDetector:
                 
                 # Send notification
                 if self.ntfy_topic:
-                    self.send_notification(object_class, confidence)
+                    self.send_notification(object_class, confidence, person_count)
                     self.last_notification_time[object_class] = current_time
                 
                 # Log to Supabase if enabled
                 if self.enable_logging and self.supabase_url and self.supabase_key:
-                    self.log_detection(object_class, confidence)
+                    self.log_detection(object_class, confidence, person_count)
+        
+        # Clean up old detections
+        self._cleanup_old_detections()
+    
+    def _cleanup_old_detections(self):
+        """Remove old person detections from tracking"""
+        current_time = time.time()
+        for person_id, (last_seen, _) in list(self.detected_persons.items()):
+            if current_time - last_seen > self.person_tracking_timeout:
+                del self.detected_persons[person_id]
 
-    def send_notification(self, object_class, confidence, is_priority=False):
+    def send_notification(self, object_class, confidence, person_count, is_priority=False):
         """Send a notification using NTFY"""
         try:
+            # Get the live feed URL
+            live_feed_url = f"{config.FRONTEND_URL}/dashboard"  # Adjust this based on your frontend URL
+            
             # Special handling for person detection
             if object_class.lower() == 'person':
                 title = "Person Detected!"  # Remove emoji characters that cause encoding issues
-                message = f"A person was detected with {confidence:.2%} confidence"
+                message = f"{person_count} person(s) detected with {confidence:.2%} confidence\nView live feed: {live_feed_url}"
                 priority = "urgent"  # Set higher priority for person detections
                 tags = "warning,eyes,bell"
             else:
                 title = f"Object Detected: {object_class}"
-                message = f"Detected {object_class} with {confidence:.2%} confidence"
+                message = f"Detected {object_class} with {confidence:.2%} confidence\nView live feed: {live_feed_url}"
                 priority = self.ntfy_priority if not is_priority else "high"
                 tags = "warning"
             
             # Add timestamp to the message
-            timestamp = datetime.now().strftime("%H:%M:%S")
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             message = f"[{timestamp}] {message}"
             
             # Use only ASCII characters in headers to avoid encoding issues
@@ -389,7 +507,8 @@ class ObjectDetector:
                 "Title": title,
                 "Priority": priority,
                 "Tags": tags,
-                "Content-Type": "text/plain; charset=utf-8"  # Ensure UTF-8 content type
+                "Content-Type": "text/plain; charset=utf-8",  # Ensure UTF-8 content type
+                "Click": live_feed_url  # Add click action to open the live feed
             }
             
             # Support full URL or base+topic
@@ -421,7 +540,7 @@ class ObjectDetector:
             import traceback
             logger.debug(f"Notification error details: {traceback.format_exc()}")
 
-    def log_detection(self, object_class, confidence):
+    def log_detection(self, object_class, confidence, person_count):
         """Log detection to Supabase"""
         try:
             timestamp = datetime.now().isoformat()
@@ -436,7 +555,8 @@ class ObjectDetector:
                 "created_at": timestamp,
                 "user_id": self.user_id,
                 "object_type": object_class,
-                "confidence": confidence
+                "confidence": confidence,
+                "person_count": person_count
             }
             
             url = f"{self.supabase_url}/rest/v1/detection_events"

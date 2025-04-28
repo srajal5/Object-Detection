@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { Database } from "@/lib/types";
 import { mockSupabase } from "./supabase-mock";
 
 // Default values for development environment
@@ -7,8 +8,7 @@ const defaultAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.mock-key";
 
 // Use environment variables or fallback to default values
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || defaultUrl;
-const supabaseAnonKey =
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || defaultAnonKey;
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || defaultAnonKey;
 
 // Determine if we're using mock or real Supabase
 const USE_MOCK =
@@ -27,7 +27,7 @@ if (USE_MOCK) {
   supabaseClient = mockSupabase;
 } else {
   // Use real Supabase client
-  supabaseClient = createClient(supabaseUrl, supabaseAnonKey);
+  supabaseClient = createClient<Database>(supabaseUrl, supabaseAnonKey);
 }
 
 // Export the client (either mock or real)

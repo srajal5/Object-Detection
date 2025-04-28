@@ -1,4 +1,4 @@
-// File: C:\Users\aditi\Documents\GitHub\SentryV2\dashboard\src\app\dashboard\layout.tsx
+// File: C:\Users\ASUS\SenteryV3-Obj_Detection\src\app\dashboard\layout.tsx
 import * as entry from '../../../../src/app/dashboard/layout.js'
 import type { ResolvingMetadata, ResolvingViewport } from 'next/dist/lib/metadata/types/metadata-interface.js'
 

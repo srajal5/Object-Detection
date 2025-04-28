@@ -1,4 +1,4 @@
-// File: C:\Users\aditi\Documents\GitHub\SentryV2\dashboard\src\app\auth\login\page.tsx
+// File: C:\Users\ASUS\SenteryV3-Obj_Detection\src\app\auth\login\page.tsx
 import * as entry from '../../../../../src/app/auth/login/page.js'
 import type { ResolvingMetadata, ResolvingViewport } from 'next/dist/lib/metadata/types/metadata-interface.js'
 

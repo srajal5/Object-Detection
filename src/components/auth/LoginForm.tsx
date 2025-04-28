@@ -12,7 +12,6 @@ import {
   FormLabel,
   FormMessage,
 } from "@/components/ui/form";
-import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 
@@ -35,22 +34,37 @@ export default function LoginForm() {
   const onSubmit = async (data: LoginFormData) => {
     setIsLoading(true);
     try {
-      const { error } = await supabase.auth.signInWithPassword({
-        email: data.email,
-        password: data.password,
+      console.log("Attempting login with email:", data.email);
+      
+      const response = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          email: data.email,
+          password: data.password,
+        }),
+        credentials: 'include', // Important: include credentials to receive cookies
       });
 
-      if (error) {
-        toast.error(error.message || "Failed to login");
-        return;
+      const result = await response.json();
+      
+      // Log response headers for debugging
+      console.log("Login response headers:", {
+        'X-Auth-Token-Set': response.headers.get('X-Auth-Token-Set'),
+        'X-Auth-User-ID': response.headers.get('X-Auth-User-ID'),
+      });
+
+      if (!response.ok) {
+        throw new Error(result.message || 'Login failed');
       }
 
+      console.log("Login successful, redirecting to dashboard");
       toast.success("Logged in successfully!");
-
-      // Redirect to dashboard after a short delay
-      setTimeout(() => {
-        router.push("/dashboard");
-      }, 1000);
+      
+      // Use window.location for a full page reload to ensure cookies are properly set
+      window.location.href = "/dashboard";
     } catch (error: any) {
       console.error("Login error:", error);
       toast.error(
