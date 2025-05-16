@@ -85,11 +85,7 @@ dashboard/                # Main project folder
 
    > **Development Mode**: If you don't provide valid Supabase credentials, the application will automatically run in development mode with mock authentication. This allows you to test and develop the application without setting up Supabase.
 
-4. Set up Supabase:
 
-   - Create a new project on [Supabase](https://supabase.com/)
-   - Enable email authentication in Auth > Settings
-   - Create the following tables in your Supabase database:
 
    **profiles table**:
 
