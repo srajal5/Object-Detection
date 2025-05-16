@@ -1,3 +1,5 @@
 # Auto detect text files and perform LF normalization
 * text=auto
 ObjectDetection filter=lfs diff=lfs merge=lfs -text
+*.node filter=lfs diff=lfs merge=lfs -text
+*.pack filter=lfs diff=lfs merge=lfs -text
