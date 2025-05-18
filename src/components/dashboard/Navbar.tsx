@@ -2,11 +2,11 @@
 
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { toast } from "sonner";
 
 export default function Navbar() {
-  const router = useRouter();
+  const pathname = usePathname();
 
   const handleSignOut = async () => {
     try {

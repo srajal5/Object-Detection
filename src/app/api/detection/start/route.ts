@@ -3,9 +3,32 @@ import axios from 'axios';
 
 const DETECTION_API_URL = process.env.DETECTION_API_URL || 'http://localhost:5000';
 
+interface DetectionRequestBody {
+  cameraSource: string;
+  ipCameraUrl?: string;
+  ipCameraPort?: string;
+  ntfyTopic?: string;
+  ntfyPriority?: string;
+  enableLogging?: boolean;
+  enablePersonDetection?: boolean;
+  streamQuality?: number;
+  frameBufferSize?: number;
+}
+
+interface DetectionServiceBody {
+  ntfyTopic: string;
+  ntfyPriority: string;
+  enableLogging: boolean;
+  enablePersonDetection: boolean;
+  streamQuality: number;
+  frameBufferSize: number;
+  ipCameraUrl?: string;
+  ipCameraPort?: string;
+}
+
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
+    const body = await request.json() as DetectionRequestBody;
     console.log('Received request body:', body);
     
     // Validate required fields
@@ -17,7 +40,7 @@ export async function POST(request: Request) {
     }
 
     // Prepare the request body for the detection service
-    const detectionServiceBody: any = {
+    const detectionServiceBody: DetectionServiceBody = {
       ntfyTopic: body.ntfyTopic || '',
       ntfyPriority: body.ntfyPriority || 'default',
       enableLogging: body.enableLogging || false,
@@ -76,30 +99,32 @@ export async function POST(request: Request) {
     const response = await axios.post(`${DETECTION_API_URL}/start`, detectionServiceBody);
     console.log('Detection service response:', response.data);
     return NextResponse.json(response.data);
-  } catch (error: any) {
+  } catch (error) {
     console.error('Error starting detection:', error);
     
     // Handle specific error cases
-    if (error.response) {
-      // The request was made and the server responded with a status code
-      // that falls out of the range of 2xx
-      console.error('Detection service error response:', error.response.data);
-      return NextResponse.json(
-        { message: error.response.data?.message || 'Failed to start detection' },
-        { status: error.response.status }
-      );
-    } else if (error.request) {
-      // The request was made but no response was received
-      return NextResponse.json(
-        { message: 'No response from detection service' },
-        { status: 503 }
-      );
-    } else {
-      // Something happened in setting up the request that triggered an Error
-      return NextResponse.json(
-        { message: error.message || 'Failed to start detection' },
-        { status: 500 }
-      );
+    if (axios.isAxiosError(error)) {
+      if (error.response) {
+        // The request was made and the server responded with a status code
+        // that falls out of the range of 2xx
+        console.error('Detection service error response:', error.response.data);
+        return NextResponse.json(
+          { message: error.response.data?.message || 'Failed to start detection' },
+          { status: error.response.status }
+        );
+      } else if (error.request) {
+        // The request was made but no response was received
+        return NextResponse.json(
+          { message: 'No response from detection service' },
+          { status: 503 }
+        );
+      }
     }
+    
+    // Something happened in setting up the request that triggered an Error
+    return NextResponse.json(
+      { message: error instanceof Error ? error.message : 'Failed to start detection' },
+      { status: 500 }
+    );
   }
 } 
