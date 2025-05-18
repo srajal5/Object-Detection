@@ -32,7 +32,7 @@ export async function registerUser(email: string, password: string, name?: strin
     await user.save();
     
     // Return user without password
-    const { password: _, ...userWithoutPassword } = user.toObject();
+    const { password: _password, ...userWithoutPassword } = user.toObject();
     return userWithoutPassword;
   } catch (error) {
     console.error('Registration error:', error);
@@ -58,13 +58,13 @@ export async function loginUser(email: string, password: string) {
     
     // Create JWT token using jose
     const secret = new TextEncoder().encode(JWT_SECRET);
-    const token = await new SignJWT({ userId: user._id })
+    const token = await new SignJWT({ userId: user._id.toString() })
       .setProtectedHeader({ alg: 'HS256' })
       .setExpirationTime(JWT_EXPIRES_IN)
       .sign(secret);
     
     // Return user without password and token
-    const { password: _, ...userWithoutPassword } = user.toObject();
+    const { password: _password, ...userWithoutPassword } = user.toObject();
     return { user: userWithoutPassword, token };
   } catch (error) {
     console.error('Login error:', error);
@@ -72,7 +72,7 @@ export async function loginUser(email: string, password: string) {
   }
 }
 
-export async function getCurrentUser(req: NextRequest) {
+export async function getCurrentUser(_req: NextRequest) {
   try {
     // Get token from cookie
     const cookieStore = await cookies();
@@ -89,7 +89,7 @@ export async function getCurrentUser(req: NextRequest) {
     // Only connect to DB if we need to fetch user data
     if (payload && payload.userId) {
       await connectDB();
-      const user = await User.findById(payload.userId).select('-password');
+      const user = await User.findById(payload.userId.toString()).select('-password');
       return user;
     }
     

@@ -6,6 +6,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import VideoFeed from "@/components/dashboard/VideoFeed";
 
 export default function DashboardPage() {
   return (
@@ -17,18 +18,32 @@ export default function DashboardPage() {
         </p>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Detection Configuration</CardTitle>
-          <CardDescription>
-            Configure your IP camera settings, NTFY notifications, and manage
-            detection sessions
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <DetectionSettings />
-        </CardContent>
-      </Card>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <Card>
+          <CardHeader>
+            <CardTitle>Live Feed</CardTitle>
+            <CardDescription>
+              Real-time camera feed with object detection
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <VideoFeed />
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Detection Configuration</CardTitle>
+            <CardDescription>
+              Configure your IP camera settings, NTFY notifications, and manage
+              detection sessions
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <DetectionSettings />
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }

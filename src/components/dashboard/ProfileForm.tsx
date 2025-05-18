@@ -13,7 +13,6 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { toast } from "sonner";
-import { supabase } from "@/lib/supabase";
 
 interface ProfileFormData {
   email: string;
@@ -40,27 +39,18 @@ export default function ProfileForm() {
   useEffect(() => {
     const getUserProfile = async () => {
       try {
-        const {
-          data: { user },
-        } = await supabase.auth.getUser();
+        // Get user profile from MongoDB
+        const response = await fetch('/api/user/profile');
+        const data = await response.json();
 
-        if (user) {
-          setUser(user);
-          form.setValue("email", user.email || "");
-
-          // Get user profile data from Supabase if you have a profiles table
-          const { data: profile } = await supabase
-            .from("profiles")
-            .select("*")
-            .eq("id", user.id)
-            .single();
-
-          if (profile) {
-            form.setValue("fullName", profile.full_name || "");
-          }
+        if (data.user) {
+          setUser(data.user);
+          form.setValue("email", data.user.email || "");
+          form.setValue("fullName", data.user.name || "");
         }
       } catch (error) {
         console.error("Error fetching user profile:", error);
+        toast.error("Failed to load profile");
       }
     };
 
@@ -78,30 +68,23 @@ export default function ProfileForm() {
 
     setIsLoading(true);
     try {
-      // Update profile in Supabase
-      if (data.fullName && user) {
-        const { error: profileError } = await supabase.from("profiles").upsert({
-          id: user.id,
-          full_name: data.fullName,
-          updated_at: new Date().toISOString(),
-        });
+      // Update profile in MongoDB
+      const response = await fetch('/api/user/profile', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: data.fullName,
+          currentPassword: data.currentPassword,
+          newPassword: data.newPassword,
+        }),
+      });
 
-        if (profileError) {
-          toast.error(profileError.message || "Failed to update profile");
-          return;
-        }
-      }
+      const result = await response.json();
 
-      // Update password if provided
-      if (data.newPassword && data.currentPassword) {
-        const { error: passwordError } = await supabase.auth.updateUser({
-          password: data.newPassword,
-        });
-
-        if (passwordError) {
-          toast.error(passwordError.message || "Failed to update password");
-          return;
-        }
+      if (!response.ok) {
+        throw new Error(result.message || 'Failed to update profile');
       }
 
       toast.success("Profile updated successfully");
@@ -112,7 +95,7 @@ export default function ProfileForm() {
         confirmPassword: "",
       });
     } catch (error) {
-      toast.error("An unexpected error occurred");
+      toast.error(error instanceof Error ? error.message : "An unexpected error occurred");
       console.error(error);
     } finally {
       setIsLoading(false);

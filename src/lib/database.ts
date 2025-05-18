@@ -1,48 +1,30 @@
-import { supabase } from './supabase';
-import { Database } from '@/lib/types';
-
-export type Profile = Database['public']['Tables']['profiles']['Row'];
+import Profile from '@/models/Profile';
+import { connectDB } from './mongodb';
 
 export async function createProfile(userId: string, email: string) {
-  // First insert the profile
-  const { error: insertError } = await supabase
-    .from('profiles')
-    .upsert({
-      id: userId,
-      email: email,
-    } as Database['public']['Tables']['profiles']['Insert']);
-
-  if (insertError) {
-    console.error('Error creating profile:', insertError);
-    throw insertError;
+  await connectDB();
+  try {
+    // Upsert profile (create if not exists, update if exists)
+    const profile = await Profile.findOneAndUpdate(
+      { userId },
+      { userId, email },
+      { new: true, upsert: true, setDefaultsOnInsert: true }
+    );
+    return profile;
+  } catch (error) {
+    console.error('Error creating profile:', error);
+    throw error;
   }
-
-  // Then fetch the created profile
-  const { data, error: fetchError } = await supabase
-    .from('profiles')
-    .select('*')
-    .eq('id', userId)
-    .single();
-
-  if (fetchError) {
-    console.error('Error fetching created profile:', fetchError);
-    throw fetchError;
-  }
-
-  return data;
 }
 
 export async function getProfile(userId: string) {
-  const { data, error } = await supabase
-    .from('profiles')
-    .select('*')
-    .eq('id', userId)
-    .single();
-
-  if (error) {
+  await connectDB();
+  try {
+    const profile = await Profile.findOne({ userId });
+    if (!profile) throw new Error('Profile not found');
+    return profile;
+  } catch (error) {
     console.error('Error fetching profile:', error);
     throw error;
   }
-
-  return data;
 } 

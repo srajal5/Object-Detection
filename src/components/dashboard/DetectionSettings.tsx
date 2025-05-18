@@ -14,11 +14,13 @@ import {
   FormDescription,
 } from "@/components/ui/form";
 import { toast } from "sonner";
-import { supabase } from "@/lib/supabase";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Switch } from "@/components/ui/switch";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import axios from "axios";
 
 interface DetectionSettingsFormData {
+  cameraSource: string;
   ipCameraUrl: string;
   ipCameraPort: string;
   ntfyTopic: string;
@@ -33,9 +35,11 @@ export default function DetectionSettings() {
   const [isSessionRunning, setIsSessionRunning] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isCheckingStatus, setIsCheckingStatus] = useState(true);
+  const [availableCameras, setAvailableCameras] = useState<MediaDeviceInfo[]>([]);
 
   const form = useForm<DetectionSettingsFormData>({
     defaultValues: {
+      cameraSource: "default",
       ipCameraUrl: "",
       ipCameraPort: "8080",
       ntfyTopic: "",
@@ -47,169 +51,165 @@ export default function DetectionSettings() {
     },
   });
 
-  // Get API URL from environment or use default
-  const apiUrl =
-    process.env.NEXT_PUBLIC_DETECTION_API_URL || "http://localhost:5000";
-
-  // Add a function to check detector health more thoroughly
-  const checkDetectorHealth = async () => {
-    try {
-      const response = await axios.get(`${apiUrl}/health`);
-      const { detection_active, monitoring_active, heartbeat_age } =
-        response.data;
-
-      // Update UI state
-      setIsSessionRunning(detection_active);
-
-      // If monitoring is active but detection isn't, there might be an issue
-      if (monitoring_active && !detection_active) {
-        // If we previously thought detection was running, notify the user
-        if (isSessionRunning) {
-          toast.error(
-            "Detection stopped unexpectedly. The system is attempting to restart it."
-          );
-        }
+  useEffect(() => {
+    // Get available cameras
+    const getCameras = async () => {
+      try {
+        // Request camera permissions first
+        await navigator.mediaDevices.getUserMedia({ video: true });
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const cameras: MediaDeviceInfo[] = devices
+          .filter(device => device.kind === 'videoinput' && device.deviceId)
+          .map((camera, index) => ({
+            ...camera,
+            deviceId: camera.deviceId || `camera-${Math.random().toString(36).substr(2, 9)}`,
+            label: camera.label || `Camera ${index + 1}`
+          }));
+        setAvailableCameras(cameras);
+      } catch (error) {
+        console.error("Failed to get cameras:", error);
+        toast.error("Failed to access camera devices. Please ensure camera permissions are granted.");
       }
+    };
 
-      // Log monitoring info but don't show to user
-      if (detection_active && heartbeat_age !== null) {
-        console.debug(`Detector heartbeat age: ${heartbeat_age.toFixed(1)}s`);
-      }
+    getCameras();
+  }, []);
 
-      return detection_active;
-    } catch (error) {
-      console.error("Failed to check detector health", error);
-      return false;
-    }
-  };
-
-  // Use this enhanced health check in useEffect
   useEffect(() => {
     const checkStatus = async () => {
       try {
-        await checkDetectorHealth();
+        const response = await fetch('/api/detection/status');
+        const data = await response.json();
+        setIsSessionRunning(data.isRunning);
       } catch (error) {
         console.error("Failed to check detection status", error);
-        // If server is not running, we assume detection is not active
         setIsSessionRunning(false);
       } finally {
         setIsCheckingStatus(false);
       }
     };
 
-    // Load saved settings
     const loadSettings = async () => {
       try {
-        const {
-          data: { user },
-        } = await supabase.auth.getUser();
+        const response = await fetch('/api/detection/settings');
+        const data = await response.json();
 
-        if (user) {
-          const { data, error } = await supabase
-            .from("detection_settings")
-            .select("*")
-            .eq("user_id", user.id)
-            .single();
-
-          if (data && !error) {
-            form.setValue("ipCameraUrl", data.ip_camera_url || "");
-            form.setValue("ipCameraPort", data.ip_camera_port || "8080");
-            form.setValue("ntfyTopic", data.ntfy_topic || "");
-            form.setValue("ntfyPriority", data.ntfy_priority || "default");
-            form.setValue("enableLogging", data.enable_logging || false);
-            form.setValue(
-              "enablePersonDetection",
-              data.enable_person_detection !== false
-            ); // Default to true if not set
-            form.setValue("streamQuality", data.stream_quality || 80);
-            form.setValue("frameBufferSize", data.frame_buffer_size || 10);
-          }
+        if (data.settings) {
+          form.reset(data.settings);
         }
       } catch (error) {
         console.error("Failed to load settings", error);
+        toast.error("Failed to load detection settings");
       }
     };
 
     checkStatus();
     loadSettings();
+  }, [form]);
 
-    // Poll for status updates with variable interval
-    const checkInterval = 5000; // 5 seconds
-    const intervalId = setInterval(checkStatus, checkInterval);
+  const onSubmit = async (data: DetectionSettingsFormData) => {
+    setIsLoading(true);
+    try {
+      const response = await fetch('/api/detection/settings', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(data),
+      });
 
-    return () => clearInterval(intervalId);
-  }, [apiUrl, form]);
+      if (!response.ok) {
+        throw new Error('Failed to save settings');
+      }
+
+      toast.success("Settings saved successfully");
+    } catch (error) {
+      console.error("Save settings error:", error);
+      toast.error("Failed to save settings");
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const startSession = async () => {
     setIsLoading(true);
     try {
-      // Get form values for sending to the API
       const formValues = form.getValues();
-
-      // Validate required fields before sending
-      if (!formValues.ipCameraUrl) {
-        toast.error("Camera URL is required");
+      
+      // Validate form values
+      if (!formValues.cameraSource) {
+        toast.error("Please select a camera source");
         setIsLoading(false);
         return;
       }
 
-      toast.info("Starting detection session...");
+      // Prepare request body based on camera source
+      const requestBody: any = {
+        cameraSource: formValues.cameraSource,
+        ntfyTopic: formValues.ntfyTopic,
+        ntfyPriority: formValues.ntfyPriority,
+        enableLogging: formValues.enableLogging,
+        enablePersonDetection: formValues.enablePersonDetection,
+        streamQuality: formValues.streamQuality,
+        frameBufferSize: formValues.frameBufferSize,
+      };
 
-      // Send request to start detection
-      const response = await axios.post(
-        `${apiUrl}/start`,
-        { ...formValues },
-        { timeout: 15000 } // Increase timeout to 15 seconds
-      );
-
-      if (response.status === 200) {
-        setIsSessionRunning(true);
-        toast.success("Object detection session started successfully!");
-
-        // Start polling for status more frequently at first to detect early failures
-        const initialPollCount = 5;
-        let pollCount = 0;
-
-        const quickPoll = setInterval(async () => {
-          try {
-            const statusResponse = await axios.get(`${apiUrl}/status`);
-            const isActive = statusResponse.data.detection_active;
-            setIsSessionRunning(isActive);
-
-            if (!isActive && pollCount > 0) {
-              // Session stopped unexpectedly
-              toast.error("Detection session stopped unexpectedly");
-              clearInterval(quickPoll);
-            }
-
-            pollCount++;
-            if (pollCount >= initialPollCount) {
-              clearInterval(quickPoll);
-            }
-          } catch (error) {
-            console.error("Error checking status", error);
-            clearInterval(quickPoll);
+      // Handle different camera sources
+      switch (formValues.cameraSource) {
+        case 'ip':
+          if (!formValues.ipCameraUrl?.trim()) {
+            toast.error("IP Camera URL is required");
+            setIsLoading(false);
+            return;
           }
-        }, 1000); // Check every second for the first few seconds
-      } else {
-        toast.error(
-          response.data.message || "Failed to start detection session"
-        );
+          if (!formValues.ipCameraPort?.trim()) {
+            toast.error("IP Camera Port is required");
+            setIsLoading(false);
+            return;
+          }
+          requestBody.ipCameraUrl = formValues.ipCameraUrl;
+          requestBody.ipCameraPort = formValues.ipCameraPort;
+          break;
+
+        case 'default':
+          // For system default camera, use webcam://0
+          requestBody.ipCameraUrl = 'webcam://0';
+          requestBody.ipCameraPort = '0';
+          break;
+
+        case 'cameo':
+          // For Cameo Studio, use webcam://1
+          requestBody.ipCameraUrl = 'webcam://1';
+          requestBody.ipCameraPort = '0';
+          break;
+
+        default:
+          // For physical cameras, use the device ID
+          if (formValues.cameraSource.startsWith('camera-') || formValues.cameraSource.includes('videoinput')) {
+            requestBody.ipCameraUrl = `webcam://${formValues.cameraSource}`;
+            requestBody.ipCameraPort = '0';
+          }
       }
+
+      const response = await fetch('/api/detection/start', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(requestBody),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.message || 'Failed to start detection session');
+      }
+
+      setIsSessionRunning(true);
+      toast.success("Detection session started");
     } catch (error: any) {
       console.error("Start session error:", error);
-
-      // More detailed error message
-      const errorMessage =
-        error.response?.data?.message ||
-        (error.code === "ECONNABORTED"
-          ? "Connection timeout. Server may be busy or unreachable."
-          : "Failed to start detection session");
-
-      toast.error(errorMessage);
-
-      // Make sure UI reflects that the session is not running
-      setIsSessionRunning(false);
+      toast.error(error.message || "Failed to start detection session");
     } finally {
       setIsLoading(false);
     }
@@ -218,87 +218,68 @@ export default function DetectionSettings() {
   const stopSession = async () => {
     setIsLoading(true);
     try {
-      // Send request to stop detection
-      const response = await axios.post(`${apiUrl}/stop`);
-
-      if (response.status === 200) {
-        setIsSessionRunning(false);
-        toast.success("Object detection session stopped");
-      } else {
-        toast.error(
-          response.data.message || "Failed to stop detection session"
-        );
-      }
-    } catch (error: any) {
-      toast.error(
-        error.response?.data?.message || "Failed to stop detection session"
-      );
-      console.error(error);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const onSubmit = async (data: DetectionSettingsFormData) => {
-    setIsLoading(true);
-    try {
-      // Save the configuration to Supabase
-      const { error } = await supabase.from("detection_settings").upsert({
-        user_id: (await supabase.auth.getUser()).data.user?.id,
-        ip_camera_url: data.ipCameraUrl,
-        ip_camera_port: data.ipCameraPort,
-        ntfy_topic: data.ntfyTopic,
-        ntfy_priority: data.ntfyPriority,
-        enable_logging: data.enableLogging,
-        enable_person_detection: data.enablePersonDetection,
-        stream_quality: data.streamQuality,
-        frame_buffer_size: data.frameBufferSize,
+      const response = await fetch('/api/detection/stop', {
+        method: 'POST',
       });
 
-      if (error) {
-        toast.error(error.message || "Failed to save settings");
-        return;
+      if (!response.ok) {
+        throw new Error('Failed to stop detection session');
       }
 
-      toast.success("Settings saved successfully");
-    } catch (error) {
-      toast.error("An unexpected error occurred");
-      console.error(error);
+      setIsSessionRunning(false);
+      toast.success("Detection session stopped");
+    } catch (error: any) {
+      console.error("Stop session error:", error);
+      toast.error(error.message || "Failed to stop detection session");
     } finally {
       setIsLoading(false);
     }
   };
 
   const testConnection = async () => {
-    setIsLoading(true);
     try {
-      const ipCameraUrl = form.getValues().ipCameraUrl;
-      const ipCameraPort = form.getValues().ipCameraPort;
-
-      toast.info(`Testing connection to ${ipCameraUrl}:${ipCameraPort}...`);
-
-      // Call the test-camera endpoint
-      const response = await axios.post(
-        `${apiUrl}/test-camera`,
-        {
-          url: ipCameraUrl,
-          port: ipCameraPort,
-        },
-        { timeout: 10000 }
-      );
-
-      if (response.data.success) {
-        toast.success("Connection successful!");
-      } else {
-        toast.error(response.data.message || "Connection failed");
+      const formValues = form.getValues();
+      
+      // Validate camera source
+      if (!formValues.cameraSource) {
+        toast.error("Please select a camera source");
+        return;
       }
+
+      // Validate IP camera fields if IP camera is selected
+      if (formValues.cameraSource === 'ip') {
+        if (!formValues.ipCameraUrl?.trim()) {
+          toast.error("IP Camera URL is required");
+          return;
+        }
+        if (!formValues.ipCameraPort?.trim()) {
+          toast.error("IP Camera Port is required");
+          return;
+        }
+      }
+
+      const response = await fetch('/api/detection/test-connection', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          cameraSource: formValues.cameraSource,
+          ipCameraUrl: formValues.ipCameraUrl,
+          ipCameraPort: formValues.ipCameraPort,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.message || 'Connection test failed');
+      }
+
+      toast.success("Connection test successful!");
     } catch (error: any) {
-      toast.error(
-        error.response?.data?.message || "Could not connect to the IP camera"
-      );
-      console.error(error);
-    } finally {
-      setIsLoading(false);
+      console.error("Test connection error:", error);
+      toast.error(error.message || "Connection test failed");
     }
   };
 
@@ -307,290 +288,256 @@ export default function DetectionSettings() {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col md:flex-row justify-between gap-4 mb-6">
-        <Card className="flex-1">
-          <CardHeader>
-            <CardTitle>Session Status</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex items-center space-x-2 mb-4">
-              <div
-                className={`h-3 w-3 rounded-full ${
-                  isSessionRunning ? "bg-green-500" : "bg-red-500"
-                }`}
-              />
-              <span>{isSessionRunning ? "Running" : "Stopped"}</span>
-            </div>
-            <div className="flex gap-2">
-              <Button
-                onClick={startSession}
-                disabled={isSessionRunning || isLoading}
-                className="flex-1"
-              >
-                Start Session
-              </Button>
-              <Button
-                onClick={stopSession}
-                disabled={!isSessionRunning || isLoading}
-                variant="destructive"
-                className="flex-1"
-              >
-                Stop Session
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Camera Preview */}
-      {isSessionRunning && (
-        <Card className="mb-6 overflow-hidden">
-          <CardHeader className="pb-2">
-            <CardTitle>Camera Feed</CardTitle>
-          </CardHeader>
-          <CardContent className="p-0 flex justify-center">
-            <div className="relative w-full aspect-video max-h-[400px] bg-black flex justify-center">
-              <img
-                src={`${apiUrl}/video_feed?t=${Date.now()}`}
-                alt="Camera Feed"
-                className="h-full object-contain"
-                style={{
-                  maxHeight: "400px",
-                  imageRendering: "auto",
-                }}
-                loading="eager"
-              />
-              <div className="absolute bottom-2 right-2 text-xs text-white bg-black bg-opacity-50 px-2 py-1 rounded">
-                Live Detection
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      <Form {...form}>
-        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-          {/* IP Camera Configuration */}
-          <div className="p-4 border rounded-lg bg-gray-50 dark:bg-slate-900">
-            <h3 className="text-lg font-medium mb-4">
-              Camera Stream Configuration
-            </h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <FormField
-                control={form.control}
-                name="ipCameraUrl"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Camera URL</FormLabel>
+    <Form {...form}>
+      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Camera Settings */}
+          <div className="space-y-4">
+            <h3 className="text-lg font-medium">Camera Settings</h3>
+            <FormField
+              control={form.control}
+              name="cameraSource"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Camera Source</FormLabel>
+                  <Select
+                    onValueChange={field.onChange}
+                    defaultValue={field.value}
+                  >
                     <FormControl>
-                      <Input
-                        placeholder="http://192.168.1.100 or rtmp://stream"
-                        {...field}
-                      />
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select camera source" />
+                      </SelectTrigger>
                     </FormControl>
-                    <FormDescription>
-                      Enter URL (HTTP, RTMP, SRT) of your camera stream
-                    </FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="ipCameraPort"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Port (optional)</FormLabel>
-                    <FormControl>
-                      <Input placeholder="8080" {...field} />
-                    </FormControl>
-                    <FormDescription>
-                      Enter port if not included in the URL
-                    </FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            </div>
+                    <SelectContent>
+                      <SelectItem value="default">System Default Camera</SelectItem>
+                      <SelectItem value="cameo">Cameo Studio</SelectItem>
+                      <SelectItem value="ip">IP Camera</SelectItem>
+                      {availableCameras.map((camera) => (
+                        <SelectItem 
+                          key={camera.deviceId} 
+                          value={camera.deviceId}
+                        >
+                          {camera.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <FormDescription>
+                    Select your preferred camera source
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
 
-            {/* IP Camera Advanced Settings */}
-            <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
-              <FormField
-                control={form.control}
-                name="streamQuality"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Stream Quality</FormLabel>
-                    <FormControl>
-                      <Input
-                        type="number"
-                        min="1"
-                        max="100"
-                        {...field}
-                        onChange={(e) => field.onChange(parseInt(e.target.value))}
-                      />
-                    </FormControl>
-                    <FormDescription>
-                      JPEG quality for IP camera streams (1-100)
-                    </FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="frameBufferSize"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Frame Buffer Size</FormLabel>
-                    <FormControl>
-                      <Input
-                        type="number"
-                        min="1"
-                        max="30"
-                        {...field}
-                        onChange={(e) => field.onChange(parseInt(e.target.value))}
-                      />
-                    </FormControl>
-                    <FormDescription>
-                      Number of frames to buffer (1-30)
-                    </FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            </div>
+            {form.watch("cameraSource") === "ip" && (
+              <>
+                <FormField
+                  control={form.control}
+                  name="ipCameraUrl"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Camera URL</FormLabel>
+                      <FormControl>
+                        <Input placeholder="http://192.168.1.100" {...field} />
+                      </FormControl>
+                      <FormDescription>
+                        The URL of your IP camera stream
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
 
-            <div className="my-4 text-sm text-gray-500 dark:text-gray-400">
-              <p>Supported formats:</p>
-              <ul className="list-disc list-inside ml-2 mt-1">
-                <li>
-                  HTTP:{" "}
-                  <span className="font-mono">http://192.168.1.100:8080</span>
-                </li>
-                <li>
-                  RTMP:{" "}
-                  <span className="font-mono">rtmp://server/live/stream</span>
-                </li>
-                <li>
-                  SRT: <span className="font-mono">srt://server:1234</span>
-                </li>
-                <li>
-                  Local webcam: <span className="font-mono">webcam://0</span>{" "}
-                  (use index for multiple cameras)
-                </li>
-              </ul>
-            </div>
-            <div className="flex flex-wrap gap-2 mt-4">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={testConnection}
-                disabled={isLoading}
-              >
-                Test Connection
-              </Button>
-              <Button
-                type="button"
-                variant="secondary"
-                onClick={() => {
-                  form.setValue("ipCameraUrl", "webcam://0");
-                  form.setValue("ipCameraPort", "");
-                  toast.info(
-                    "Local webcam selected. Click 'Test Connection' to verify."
-                  );
-                }}
-                disabled={isLoading}
-              >
-                Use Local Webcam
-              </Button>
-            </div>
+                <FormField
+                  control={form.control}
+                  name="ipCameraPort"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Camera Port</FormLabel>
+                      <FormControl>
+                        <Input placeholder="8080" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </>
+            )}
+
+            <Button
+              type="button"
+              variant="outline"
+              onClick={testConnection}
+              disabled={isLoading}
+            >
+              Test Connection
+            </Button>
           </div>
 
-          {/* NTFY Configuration */}
-          <div className="p-4 border rounded-lg bg-gray-50 dark:bg-slate-900">
-            <h3 className="text-lg font-medium mb-4">
-              NTFY Notification Configuration
-            </h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <FormField
-                control={form.control}
-                name="ntfyTopic"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>NTFY Topic</FormLabel>
-                    <FormControl>
-                      <Input placeholder="your-unique-topic" {...field} />
-                    </FormControl>
-                    <FormDescription>
-                      Create a unique topic for your notifications
-                    </FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="ntfyPriority"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>NTFY Priority</FormLabel>
-                    <FormControl>
-                      <Input placeholder="default" {...field} />
-                    </FormControl>
-                    <FormDescription>
-                      Set the priority for your notifications (default, high,
-                      etc.)
-                    </FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            </div>
+          {/* NTFY Settings */}
+          <div className="space-y-4">
+            <h3 className="text-lg font-medium">NTFY Notifications</h3>
+            <FormField
+              control={form.control}
+              name="ntfyTopic"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>NTFY Topic</FormLabel>
+                  <FormControl>
+                    <Input placeholder="your-topic" {...field} />
+                  </FormControl>
+                  <FormDescription>
+                    Create a unique topic at ntfy.sh
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
 
-            <div className="mt-4">
-              <FormField
-                control={form.control}
-                name="enablePersonDetection"
-                render={({ field }) => (
-                  <div className="flex items-center space-x-2">
-                    <input
-                      type="checkbox"
-                      id="enablePersonDetection"
-                      checked={field.value}
-                      onChange={field.onChange}
-                      className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
-                    />
-                    <label
-                      htmlFor="enablePersonDetection"
-                      className="font-medium text-gray-700 dark:text-gray-200"
-                    >
-                      Priority Person Detection Alerts
-                    </label>
+            <FormField
+              control={form.control}
+              name="ntfyPriority"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Notification Priority</FormLabel>
+                  <Select
+                    onValueChange={field.onChange}
+                    defaultValue={field.value}
+                  >
+                    <FormControl>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select priority" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      <SelectItem value="default">Default</SelectItem>
+                      <SelectItem value="high">High</SelectItem>
+                      <SelectItem value="urgent">Urgent</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </div>
+
+          {/* Advanced Settings */}
+          <div className="space-y-4">
+            <h3 className="text-lg font-medium">Advanced Settings</h3>
+            <FormField
+              control={form.control}
+              name="enableLogging"
+              render={({ field }) => (
+                <FormItem className="flex items-center justify-between rounded-lg border p-4">
+                  <div className="space-y-0.5">
+                    <FormLabel>Enable Logging</FormLabel>
+                    <FormDescription>
+                      Log detection events to database
+                    </FormDescription>
                   </div>
-                )}
-              />
-              <p className="mt-1 text-sm text-gray-500 dark:text-gray-400 ml-6">
-                Send urgent notifications when people are detected (bypasses
-                cooldown period)
-              </p>
-            </div>
+                  <FormControl>
+                    <Switch
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  </FormControl>
+                </FormItem>
+              )}
+            />
 
-            <div className="mt-4 p-2 bg-blue-50 dark:bg-blue-900/20 rounded-md text-sm">
-              <p>
-                NTFY is a simple notification service. You can subscribe to your
-                topic by visiting:{" "}
-                <span className="font-mono">https://ntfy.sh/your-topic</span>
-              </p>
-            </div>
+            <FormField
+              control={form.control}
+              name="enablePersonDetection"
+              render={({ field }) => (
+                <FormItem className="flex items-center justify-between rounded-lg border p-4">
+                  <div className="space-y-0.5">
+                    <FormLabel>Person Detection</FormLabel>
+                    <FormDescription>
+                      Enable person detection notifications
+                    </FormDescription>
+                  </div>
+                  <FormControl>
+                    <Switch
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  </FormControl>
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="streamQuality"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Stream Quality</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={100}
+                      {...field}
+                      onChange={(e) => field.onChange(Number(e.target.value))}
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    JPEG quality for camera streams (1-100)
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="frameBufferSize"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Frame Buffer Size</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={30}
+                      {...field}
+                      onChange={(e) => field.onChange(Number(e.target.value))}
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    Number of frames to buffer (1-30)
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
           </div>
+        </div>
 
-          <Button type="submit" className="w-full" disabled={isLoading}>
-            {isLoading ? "Saving..." : "Save Configuration"}
+        <div className="flex gap-4">
+          <Button
+            type="button"
+            onClick={startSession}
+            disabled={isLoading || isSessionRunning}
+          >
+            Start Detection
           </Button>
-        </form>
-      </Form>
-    </div>
+          <Button
+            type="button"
+            variant="destructive"
+            onClick={stopSession}
+            disabled={isLoading || !isSessionRunning}
+          >
+            Stop Detection
+          </Button>
+        </div>
+
+        <Button type="submit" className="w-full" disabled={isLoading}>
+          Save Settings
+        </Button>
+      </form>
+    </Form>
   );
 }

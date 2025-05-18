@@ -4,12 +4,6 @@ import { jwtVerify } from 'jose';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
 
-// Paths that require authentication
-const protectedPaths = ['/dashboard'];
-
-// Auth paths that should redirect to login if user is authenticated
-const authPaths = ['/auth/login', '/auth/register', '/login'];
-
 export async function middleware(request: NextRequest) {
   // Get the pathname of the request
   const path = request.nextUrl.pathname;

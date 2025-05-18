@@ -1,16 +1,16 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 
 interface DetectionEvent {
-  id: string;
-  created_at: string;
-  object_type: string;
+  _id: string;
+  createdAt: string;
+  objectType: string;
   confidence: number;
-  user_id: string;
+  userId: string;
+  imageUrl?: string;
 }
 
 export default function DetectionHistory() {
@@ -24,24 +24,12 @@ export default function DetectionHistory() {
   const fetchDetectionEvents = async () => {
     setIsLoading(true);
     try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (user) {
-        const { data, error } = await supabase
-          .from("detection_events")
-          .select("*")
-          .eq("user_id", user.id)
-          .order("created_at", { ascending: false });
-
-        if (error) {
-          toast.error(error.message || "Failed to fetch detection events");
-          return;
-        }
-
-        setEvents(data || []);
+      const response = await fetch('/api/detection/events');
+      if (!response.ok) {
+        throw new Error('Failed to fetch detection events');
       }
+      const data = await response.json();
+      setEvents(data || []);
     } catch (error) {
       toast.error("An unexpected error occurred");
       console.error(error);
@@ -110,12 +98,12 @@ export default function DetectionHistory() {
             </thead>
             <tbody className="bg-white dark:bg-slate-900 divide-y divide-gray-200 dark:divide-gray-700">
               {events.map((event) => (
-                <tr key={event.id}>
+                <tr key={event._id}>
                   <td className="px-6 py-4 whitespace-nowrap text-sm">
-                    {formatDate(event.created_at)}
+                    {formatDate(event.createdAt)}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm">
-                    {event.object_type}
+                    {event.objectType}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm">
                     {(event.confidence * 100).toFixed(2)}%
