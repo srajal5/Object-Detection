@@ -3,7 +3,7 @@
 import { useEffect, useRef } from "react";
 import { Card } from "@/components/ui/card";
 
-const DETECTION_API_URL = process.env.NEXT_PUBLIC_DETECTION_API_URL || 'http://localhost:5000';
+const DETECTION_API_URL = process.env.NEXT_PUBLIC_DETECTION_API_URL || 'https://object-detection-backend.vercel.app';
 
 export default function VideoFeed() {
   const videoRef = useRef<HTMLImageElement>(null);

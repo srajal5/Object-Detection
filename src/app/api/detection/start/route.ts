@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import axios from 'axios';
 
-const DETECTION_API_URL = process.env.DETECTION_API_URL || 'http://localhost:5000';
+const DETECTION_API_URL = process.env.DETECTION_API_URL || 'https://object-detection-backend.vercel.app';
 
 interface DetectionRequestBody {
   cameraSource: string;
@@ -99,32 +99,29 @@ export async function POST(request: Request) {
     const response = await axios.post(`${DETECTION_API_URL}/start`, detectionServiceBody);
     console.log('Detection service response:', response.data);
     return NextResponse.json(response.data);
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error starting detection:', error);
     
-    // Handle specific error cases
-    if (axios.isAxiosError(error)) {
-      if (error.response) {
-        // The request was made and the server responded with a status code
-        // that falls out of the range of 2xx
-        console.error('Detection service error response:', error.response.data);
-        return NextResponse.json(
-          { message: error.response.data?.message || 'Failed to start detection' },
-          { status: error.response.status }
-        );
-      } else if (error.request) {
-        // The request was made but no response was received
-        return NextResponse.json(
-          { message: 'No response from detection service' },
-          { status: 503 }
-        );
-      }
+    if (error.response) {
+      // The request was made and the server responded with a status code
+      // that falls out of the range of 2xx
+      console.error('Detection service error response:', error.response.data);
+      return NextResponse.json(
+        { message: error.response.data?.message || 'Failed to start detection' },
+        { status: error.response.status }
+      );
+    } else if (error.request) {
+      // The request was made but no response was received
+      return NextResponse.json(
+        { message: 'No response from detection service. Please check if the backend service is running.' },
+        { status: 503 }
+      );
+    } else {
+      // Something happened in setting up the request that triggered an Error
+      return NextResponse.json(
+        { message: error.message || 'Failed to start detection' },
+        { status: 500 }
+      );
     }
-    
-    // Something happened in setting up the request that triggered an Error
-    return NextResponse.json(
-      { message: error instanceof Error ? error.message : 'Failed to start detection' },
-      { status: 500 }
-    );
   }
 } 

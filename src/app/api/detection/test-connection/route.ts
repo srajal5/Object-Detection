@@ -1,13 +1,19 @@
 import { NextResponse } from 'next/server';
 import axios from 'axios';
 
-const DETECTION_API_URL = process.env.DETECTION_API_URL || 'http://localhost:5000';
+const DETECTION_API_URL = process.env.DETECTION_API_URL || 'https://object-detection-backend.vercel.app';
+
+interface TestConnectionRequestBody {
+  cameraSource: string;
+  url?: string;
+  port?: string;
+}
 
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    console.log('Received test connection request body:', body);
-    
+    console.log('Received request body:', body);
+
     // Validate required fields
     if (!body.cameraSource) {
       return NextResponse.json(
@@ -16,9 +22,9 @@ export async function POST(request: Request) {
       );
     }
 
-    // Prepare the request body for the detection service
-    const testConnectionBody: any = {
-      camera_source: body.cameraSource
+    // Prepare request body for detection service
+    const testConnectionBody: TestConnectionRequestBody = {
+      cameraSource: body.cameraSource,
     };
 
     // Handle different camera sources
@@ -37,18 +43,17 @@ export async function POST(request: Request) {
           );
         }
 
-        // Ensure URL has http:// prefix
+        // Ensure URL has http:// prefix and remove any trailing slashes
         let cameraUrl = body.ipCameraUrl.trim();
         if (!cameraUrl.startsWith('http://') && !cameraUrl.startsWith('https://')) {
           cameraUrl = `http://${cameraUrl}`;
         }
-
-        // Remove any trailing slashes
         cameraUrl = cameraUrl.replace(/\/+$/, '');
 
-        // Construct the full URL with port
-        const fullUrl = `${cameraUrl}:${body.ipCameraPort}`;
-        testConnectionBody.url = fullUrl;
+        // Remove any existing port from the URL
+        cameraUrl = cameraUrl.replace(/:\d+(\/|$)/, '');
+
+        testConnectionBody.url = cameraUrl;
         testConnectionBody.port = body.ipCameraPort;
         break;
 
@@ -80,13 +85,12 @@ export async function POST(request: Request) {
     console.log('Sending to detection service:', testConnectionBody);
 
     // Forward the request to the detection service
-    const response = await axios.post(`${DETECTION_API_URL}/test-camera`, testConnectionBody);
+    const response = await axios.post(`${DETECTION_API_URL}/api/test-camera`, testConnectionBody);
     console.log('Detection service response:', response.data);
     return NextResponse.json(response.data);
   } catch (error: any) {
     console.error('Error testing connection:', error);
     
-    // Handle specific error cases
     if (error.response) {
       // The request was made and the server responded with a status code
       // that falls out of the range of 2xx

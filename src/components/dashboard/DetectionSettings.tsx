@@ -31,6 +31,8 @@ interface DetectionSettingsFormData {
   frameBufferSize: number;
 }
 
+const DETECTION_API_URL = process.env.NEXT_PUBLIC_DETECTION_API_URL || 'https://object-detection-backend.vercel.app';
+
 export default function DetectionSettings() {
   const [isSessionRunning, setIsSessionRunning] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -132,20 +134,15 @@ export default function DetectionSettings() {
   };
 
   const startSession = async () => {
-    setIsLoading(true);
     try {
+      setIsLoading(true);
       const formValues = form.getValues();
       
-      // Validate form values
-      if (!formValues.cameraSource) {
-        toast.error("Please select a camera source");
-        setIsLoading(false);
-        return;
-      }
-
-      // Prepare request body based on camera source
-      const requestBody: any = {
+      // Prepare request body
+      const requestBody = {
         cameraSource: formValues.cameraSource,
+        ipCameraUrl: formValues.ipCameraUrl,
+        ipCameraPort: formValues.ipCameraPort,
         ntfyTopic: formValues.ntfyTopic,
         ntfyPriority: formValues.ntfyPriority,
         enableLogging: formValues.enableLogging,
@@ -198,7 +195,7 @@ export default function DetectionSettings() {
           }
       }
 
-      const response = await fetch('http://localhost:5000/start', {
+      const response = await fetch(`${DETECTION_API_URL}/start`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -213,10 +210,10 @@ export default function DetectionSettings() {
       }
 
       setIsSessionRunning(true);
-      toast.success("Detection session started");
+      toast.success('Detection session started successfully');
     } catch (error: any) {
-      console.error("Start session error:", error);
-      toast.error(error.message || "Failed to start detection session");
+      console.error('Error starting session:', error);
+      toast.error(error.message || 'Failed to start detection session');
     } finally {
       setIsLoading(false);
     }
@@ -289,7 +286,7 @@ export default function DetectionSettings() {
         };
         console.log('Request body:', requestBody);
 
-        const response = await fetch('http://localhost:5000/api/test-camera', {
+        const response = await fetch(`${DETECTION_API_URL}/api/test-camera`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -298,17 +295,16 @@ export default function DetectionSettings() {
         });
 
         const responseData = await response.json();
-        console.log('Response data:', responseData);
-
+        
         if (!response.ok) {
-          throw new Error(responseData.message || 'Connection test failed');
+          throw new Error(responseData.message || 'Failed to test camera connection');
         }
 
-        toast.success("Connection test successful!");
+        toast.success('Camera connection successful');
       }
     } catch (error: any) {
-      console.error("Test connection error:", error);
-      toast.error(error.message || "Connection test failed");
+      console.error('Error testing connection:', error);
+      toast.error(error.message || 'Failed to test camera connection');
     }
   };
 
