@@ -7,6 +7,16 @@ import cv2
 import numpy as np
 import threading
 import time
+import re
+from datetime import datetime
+import os
+import json
+import bcrypt
+import jwt
+from functools import wraps
+import requests
+from pymongo import MongoClient
+from bson.objectid import ObjectId
 
 # Configure logging
 logging.basicConfig(
@@ -16,7 +26,19 @@ logging.basicConfig(
 logger = logging.getLogger('api')
 
 app = Flask(__name__)
-CORS(app)  # Enable CORS for all routes
+# Update CORS configuration to allow credentials and specify origin
+CORS(app, resources={
+    r"/*": {
+        "origins": ["http://localhost:3000"],
+        "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        "allow_headers": ["Content-Type", "Authorization"],
+        "supports_credentials": True
+    }
+})
+
+# Initialize MongoDB client
+mongo_client = MongoClient(config.MONGODB_URI)
+db = mongo_client[config.MONGODB_DB_NAME]
 
 # Store current detection status
 detection_active = False
@@ -27,6 +49,28 @@ current_settings = None
 # Global frame for video feed
 latest_frame = None
 latest_frame_lock = threading.Lock()
+
+def token_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        # First try to get token from Authorization header
+        token = request.headers.get('Authorization')
+        if not token:
+            # If not in header, try to get from cookies
+            token = request.cookies.get('token')
+            if not token:
+                return jsonify({'message': 'Token is missing'}), 401
+        else:
+            # Remove 'Bearer ' prefix if present
+            token = token.split(' ')[1] if token.startswith('Bearer ') else token
+            
+        try:
+            data = jwt.decode(token, config.JWT_SECRET, algorithms=["HS256"])
+            current_user = data
+        except:
+            return jsonify({'message': 'Token is invalid'}), 401
+        return f(current_user, *args, **kwargs)
+    return decorated
 
 def monitor_detector():
     """Monitor the detector's heartbeat and restart if necessary"""
@@ -306,7 +350,7 @@ def get_status():
         'model_loaded': detector.model is not None
     })
 
-@app.route('/test-camera', methods=['POST'])
+@app.route('/api/test-camera', methods=['POST'])
 def test_camera():
     """Test connection to camera"""
     try:
@@ -321,70 +365,84 @@ def test_camera():
                 'message': 'No camera data provided'
             }), 400
             
-        # Extract camera URL and port
-        camera_url = data.get('url', '')
-        camera_port = data.get('port', '')
+        # Extract camera source, URL and port
+        camera_source = data.get('cameraSource', '')
+        camera_url = data.get('ipCameraUrl', '')
+        camera_port = data.get('ipCameraPort', '')
         
-        # More detailed logging
-        logger.info(f"Testing camera connection to URL: {camera_url}, Port: {camera_port}")
+        # Log all received parameters
+        logger.info(f"Received parameters - Source: {camera_source}, URL: {camera_url}, Port: {camera_port}")
         
-        if not camera_url:
-            logger.error("No camera URL provided")
+        # Validate camera source
+        if not camera_source:
+            logger.error("No camera source provided")
             return jsonify({
                 'success': False,
-                'message': 'Camera URL is required'
+                'message': 'Camera source is required'
             }), 400
-        
-        # Handle webcam URL format (webcam://0, webcam://1, etc.)
-        if camera_url.startswith('webcam://'):
-            try:
-                # Extract webcam index from URL (default to 0 if not provided or invalid)
-                webcam_index = int(camera_url.replace('webcam://', '') or 0)
-                logger.info(f"Attempting to connect to local webcam with index: {webcam_index}")
-                stream_url = webcam_index
-            except ValueError:
-                logger.error(f"Invalid webcam index: {camera_url.replace('webcam://', '')}")
-                stream_url = 0
-        # Form the full URL based on protocol
-        elif camera_url.startswith(('rtmp://', 'srt://')):
-            # For RTMP and SRT, use the URL as is or append port if specified
-            stream_url = f"{camera_url}:{camera_port}" if camera_port and ':' not in camera_url else camera_url
-        elif not camera_url.startswith(('http://', 'https://')):
-            # For HTTP streams without protocol prefix, add it
-            camera_url = f"http://{camera_url}"
-            stream_url = f"{camera_url}:{camera_port}" if camera_port else camera_url
-        else:
-            # For URLs with protocol already specified
-            stream_url = f"{camera_url}:{camera_port}" if camera_port and ':' not in camera_url else camera_url
             
-        logger.info(f"Complete stream URL: {stream_url}")
-        
-        # Try to open the camera stream
-        import cv2
-        cap = cv2.VideoCapture(stream_url)
-        
-        if cap.isOpened():
-            # Read a frame to confirm it's working
-            ret, frame = cap.read()
-            cap.release()
-            
-            if ret:
-                logger.info("Camera connection successful")
-                return jsonify({
-                    'success': True,
-                    'message': 'Camera connection successful'
-                }), 200
-            else:
-                logger.error("Connected to camera but failed to read frame")
+        # For IP camera, validate URL and port
+        if camera_source == 'ip':
+            if not camera_url:
+                logger.error("No camera URL provided for IP camera")
                 return jsonify({
                     'success': False,
-                    'message': 'Connected to camera but failed to read frame'
+                    'message': 'IP Camera URL is required'
+                }), 400
+                
+            if not camera_port:
+                logger.error("No camera port provided for IP camera")
+                return jsonify({
+                    'success': False,
+                    'message': 'IP Camera Port is required'
+                }), 400
+                
+            # Construct the full URL with port and /video
+            if not camera_url.startswith(('http://', 'https://')):
+                camera_url = f"http://{camera_url}"
+            
+            # Remove any trailing slashes
+            camera_url = camera_url.rstrip('/')
+            
+            # Construct the full URL with port and /video
+            stream_url = f"{camera_url}:{camera_port}/video"
+            logger.info(f"Constructed stream URL: {stream_url}")
+            
+            # Try to open the camera stream with a timeout
+            import cv2
+            cap = cv2.VideoCapture(stream_url)
+            
+            # Set a timeout for the connection attempt
+            cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)  # 5 second timeout
+            
+            if cap.isOpened():
+                # Read a frame to confirm it's working
+                ret, frame = cap.read()
+                cap.release()
+                
+                if ret:
+                    logger.info("Camera connection successful")
+                    return jsonify({
+                        'success': True,
+                        'message': 'Camera connection successful'
+                    }), 200
+                else:
+                    logger.error("Connected to camera but failed to read frame")
+                    return jsonify({
+                        'success': False,
+                        'message': 'Connected to camera but failed to read frame. Please check if the camera is streaming.'
+                    }), 400
+            else:
+                logger.error(f"Failed to connect to camera at {stream_url}")
+                return jsonify({
+                    'success': False,
+                    'message': f'Failed to connect to camera at {stream_url}. Please verify the URL and port are correct.'
                 }), 400
         else:
-            logger.error(f"Failed to connect to camera at {stream_url}")
+            logger.error(f"Unsupported camera source: {camera_source}")
             return jsonify({
                 'success': False,
-                'message': f'Failed to connect to camera at {stream_url}'
+                'message': f'Unsupported camera source: {camera_source}'
             }), 400
             
     except Exception as e:
@@ -392,6 +450,161 @@ def test_camera():
         return jsonify({
             'success': False,
             'message': f"Error: {str(e)}"
+        }), 500
+
+@app.route('/api/detection/history', methods=['GET'])
+@token_required
+def get_detection_history(current_user):
+    try:
+        # Get query parameters
+        start_date = request.args.get('start_date')
+        end_date = request.args.get('end_date')
+        limit = int(request.args.get('limit', 100))
+        offset = int(request.args.get('offset', 0))
+
+        logger.info(f"Fetching detection history for user {current_user}")
+        logger.info(f"Query params: start_date={start_date}, end_date={end_date}, limit={limit}, offset={offset}")
+
+        # Build query
+        query = {'user_id': current_user.get('userId')}  # Changed from 'id' to 'userId' to match JWT payload
+        
+        if start_date:
+            query['created_at'] = {'$gte': datetime.fromisoformat(start_date)}
+        if end_date:
+            query['created_at'] = {'$lte': datetime.fromisoformat(end_date)}
+            
+        logger.info(f"MongoDB query: {query}")
+            
+        # Execute query with pagination
+        events = list(db.detection_events.find(query)
+                     .sort('created_at', -1)
+                     .skip(offset)
+                     .limit(limit))
+        
+        logger.info(f"Found {len(events)} events")
+        
+        # Convert ObjectId to string for JSON serialization
+        for event in events:
+            event['_id'] = str(event['_id'])
+            event['created_at'] = event['created_at'].isoformat()
+        
+        return jsonify({
+            'success': True,
+            'data': events,
+            'count': len(events)
+        })
+    except Exception as e:
+        logger.error(f"Error fetching detection history: {str(e)}")
+        logger.exception("Full traceback:")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/detection/history/stats', methods=['GET'])
+@token_required
+def get_detection_stats(current_user):
+    try:
+        logger.info(f"Fetching detection stats for user {current_user}")
+        
+        # Get all events for the user
+        query = {'user_id': current_user.get('userId')}  # Changed from 'id' to 'userId' to match JWT payload
+        logger.info(f"MongoDB query: {query}")
+        
+        events = list(db.detection_events.find(query))
+        logger.info(f"Found {len(events)} total events for stats")
+        
+        # Process data for stats
+        daily_stats = {}
+        total_detections = len(events)
+        max_people = 0
+        
+        for event in events:
+            date = event['created_at'].date().isoformat()
+            if date not in daily_stats:
+                daily_stats[date] = 0
+            daily_stats[date] += 1
+            
+            if event.get('object_type') == 'person':
+                max_people = max(max_people, event.get('confidence', 0))
+        
+        # Convert to array format for frontend
+        daily_stats_array = [
+            {'date': date, 'count': count}
+            for date, count in daily_stats.items()
+        ]
+        
+        logger.info(f"Processed stats: {len(daily_stats_array)} days, {total_detections} total detections")
+        
+        return jsonify({
+            'success': True,
+            'data': {
+                'daily_stats': daily_stats_array,
+                'total_detections': total_detections,
+                'max_people_detected': max_people
+            }
+        })
+    except Exception as e:
+        logger.error(f"Error fetching detection stats: {str(e)}")
+        logger.exception("Full traceback:")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/user/update-password', methods=['POST'])
+@token_required
+def update_password(current_user):
+    try:
+        data = request.get_json()
+        current_password = data.get('currentPassword')
+        new_password = data.get('newPassword')
+        
+        if not current_password or not new_password:
+            return jsonify({
+                'success': False,
+                'error': 'Current password and new password are required'
+            }), 400
+            
+        # Get user from database
+        user = db.users.find_one({'_id': ObjectId(current_user['id'])})
+        
+        if not user:
+            return jsonify({
+                'success': False,
+                'error': 'User not found'
+            }), 404
+            
+        # Verify current password
+        if not bcrypt.checkpw(current_password.encode('utf-8'), user['password'].encode('utf-8')):
+            return jsonify({
+                'success': False,
+                'error': 'Current password is incorrect'
+            }), 401
+            
+        # Hash new password
+        hashed_password = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt())
+        
+        # Update password in database
+        db.users.update_one(
+            {'_id': ObjectId(current_user['id'])},
+            {
+                '$set': {
+                    'password': hashed_password.decode('utf-8'),
+                    'updated_at': datetime.utcnow()
+                }
+            }
+        )
+        
+        return jsonify({
+            'success': True,
+            'message': 'Password updated successfully'
+        })
+    except Exception as e:
+        logger.error(f"Error updating password: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
         }), 500
 
 if __name__ == '__main__':

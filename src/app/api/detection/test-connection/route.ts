@@ -36,7 +36,19 @@ export async function POST(request: Request) {
             { status: 400 }
           );
         }
-        testConnectionBody.url = body.ipCameraUrl;
+
+        // Ensure URL has http:// prefix
+        let cameraUrl = body.ipCameraUrl.trim();
+        if (!cameraUrl.startsWith('http://') && !cameraUrl.startsWith('https://')) {
+          cameraUrl = `http://${cameraUrl}`;
+        }
+
+        // Remove any trailing slashes
+        cameraUrl = cameraUrl.replace(/\/+$/, '');
+
+        // Construct the full URL with port
+        const fullUrl = `${cameraUrl}:${body.ipCameraPort}`;
+        testConnectionBody.url = fullUrl;
         testConnectionBody.port = body.ipCameraPort;
         break;
 
@@ -86,7 +98,7 @@ export async function POST(request: Request) {
     } else if (error.request) {
       // The request was made but no response was received
       return NextResponse.json(
-        { message: 'No response from detection service' },
+        { message: 'No response from detection service. Please check if the backend service is running.' },
         { status: 503 }
       );
     } else {

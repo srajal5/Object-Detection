@@ -167,31 +167,38 @@ export default function DetectionSettings() {
             setIsLoading(false);
             return;
           }
-          requestBody.ipCameraUrl = formValues.ipCameraUrl;
-          requestBody.ipCameraPort = formValues.ipCameraPort;
+          // Ensure URL has http:// prefix and remove any trailing slashes
+          let cameraUrl = formValues.ipCameraUrl.trim();
+          if (!cameraUrl.startsWith('http://') && !cameraUrl.startsWith('https://')) {
+            cameraUrl = `http://${cameraUrl}`;
+          }
+          cameraUrl = cameraUrl.replace(/\/+$/, '');
+          
+          // Remove any existing port from the URL
+          cameraUrl = cameraUrl.replace(/:\d+(\/|$)/, '');
+          
+          // Construct the full URL with port and /video
+          requestBody.ipCameraUrl = `${cameraUrl}:${formValues.ipCameraPort}/video`;
           break;
 
         case 'default':
           // For system default camera, use webcam://0
           requestBody.ipCameraUrl = 'webcam://0';
-          requestBody.ipCameraPort = '0';
           break;
 
         case 'cameo':
           // For Cameo Studio, use webcam://1
           requestBody.ipCameraUrl = 'webcam://1';
-          requestBody.ipCameraPort = '0';
           break;
 
         default:
           // For physical cameras, use the device ID
           if (formValues.cameraSource.startsWith('camera-') || formValues.cameraSource.includes('videoinput')) {
             requestBody.ipCameraUrl = `webcam://${formValues.cameraSource}`;
-            requestBody.ipCameraPort = '0';
           }
       }
 
-      const response = await fetch('/api/detection/start', {
+      const response = await fetch('http://localhost:5000/start', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -239,6 +246,7 @@ export default function DetectionSettings() {
   const testConnection = async () => {
     try {
       const formValues = form.getValues();
+      console.log('Form values:', formValues);
       
       // Validate camera source
       if (!formValues.cameraSource) {
@@ -248,6 +256,9 @@ export default function DetectionSettings() {
 
       // Validate IP camera fields if IP camera is selected
       if (formValues.cameraSource === 'ip') {
+        console.log('IP Camera URL:', formValues.ipCameraUrl);
+        console.log('IP Camera Port:', formValues.ipCameraPort);
+
         if (!formValues.ipCameraUrl?.trim()) {
           toast.error("IP Camera URL is required");
           return;
@@ -256,27 +267,45 @@ export default function DetectionSettings() {
           toast.error("IP Camera Port is required");
           return;
         }
-      }
 
-      const response = await fetch('/api/detection/test-connection', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          cameraSource: formValues.cameraSource,
-          ipCameraUrl: formValues.ipCameraUrl,
+        // Ensure URL has http:// prefix and remove any trailing slashes
+        let cameraUrl = formValues.ipCameraUrl.trim();
+        if (!cameraUrl.startsWith('http://') && !cameraUrl.startsWith('https://')) {
+          cameraUrl = `http://${cameraUrl}`;
+        }
+        cameraUrl = cameraUrl.replace(/\/+$/, '');
+
+        // Remove any existing port from the URL
+        cameraUrl = cameraUrl.replace(/:\d+(\/|$)/, '');
+
+        // Construct the URL with port and /video
+        const fullUrl = `${cameraUrl}:${formValues.ipCameraPort}/video`;
+        console.log('Full URL:', fullUrl);
+
+        const requestBody = {
+          cameraSource: 'ip', // Hardcode to 'ip' since we're in the IP camera section
+          ipCameraUrl: cameraUrl,
           ipCameraPort: formValues.ipCameraPort,
-        }),
-      });
+        };
+        console.log('Request body:', requestBody);
 
-      const data = await response.json();
+        const response = await fetch('http://localhost:5000/api/test-camera', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
+        });
 
-      if (!response.ok) {
-        throw new Error(data.message || 'Connection test failed');
+        const responseData = await response.json();
+        console.log('Response data:', responseData);
+
+        if (!response.ok) {
+          throw new Error(responseData.message || 'Connection test failed');
+        }
+
+        toast.success("Connection test successful!");
       }
-
-      toast.success("Connection test successful!");
     } catch (error: any) {
       console.error("Test connection error:", error);
       toast.error(error.message || "Connection test failed");

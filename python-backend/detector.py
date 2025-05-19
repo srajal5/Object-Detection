@@ -45,8 +45,16 @@ class ObjectDetector:
         self.max_reconnect_attempts = 5
         self.reconnect_delay = 2  # seconds between reconnection attempts
         self.stream_quality = 80  # JPEG quality for IP camera streams (0-100)
-        self.frame_buffer_size = 10  # Number of frames to buffer for IP cameras
+        self.frame_buffer_size = 10  # Reduced buffer size
         self.frame_buffer = []
+        self._last_callback_time = 0
+        self.frame_interval = 0.033  # Target ~30 FPS
+        self.skip_frames = 2  # Process every 3rd frame
+        self.frame_count = 0
+        self.processing_frame = False
+        self.last_frame_time = 0
+        self.target_fps = 30
+        self.frame_time = 1.0 / self.target_fps
         
     def heartbeat(self):
         """Update the heartbeat timestamp to indicate the detector is still alive"""
@@ -150,9 +158,17 @@ class ObjectDetector:
             # Set IP camera specific parameters
             if self.is_ip_camera:
                 self.cap.set(cv2.CAP_PROP_BUFFERSIZE, self.frame_buffer_size)
-                # Try to set lower resolution for IP cameras to reduce bandwidth
-                self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-                self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+                # Set higher resolution for better quality
+                self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+                self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+                # Set FPS to 30
+                self.cap.set(cv2.CAP_PROP_FPS, 30)
+                # Set buffer size
+                self.cap.set(cv2.CAP_PROP_BUFFERSIZE, self.frame_buffer_size)
+                # Set auto focus
+                self.cap.set(cv2.CAP_PROP_AUTOFOCUS, 1)
+                # Set auto exposure
+                self.cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1)
             
             if not self.cap.isOpened():
                 logger.error("Failed to open video stream")
@@ -194,28 +210,24 @@ class ObjectDetector:
         logger.info("Detection loop started")
         last_detection_time = 0
         consecutive_errors = 0
-        max_consecutive_errors = 10  # Increased from 5 to be more tolerant of errors
+        max_consecutive_errors = 10
+        frame_count = 0
 
         while self.is_running:
             try:
-                # Check if enough time has passed since last detection
                 current_time = time.time()
+                
+                # Skip frames if we're falling behind
                 if current_time - last_detection_time < config.DETECTION_INTERVAL:
-                    time.sleep(0.1)  # Short sleep to prevent CPU hogging
+                    time.sleep(0.01)  # Reduced sleep time
                     continue
 
-                # Read frame from camera (with timeout handling)
+                # Read frame from camera
                 if self.cap is None or not self.cap.isOpened():
                     logger.warning("Camera not open, attempting to reconnect...")
                     try:
                         if self.cap is not None:
                             self.cap.release()
-                        
-                        # For IP cameras, implement exponential backoff
-                        if self.is_ip_camera:
-                            wait_time = min(self.reconnect_delay * (2 ** self.reconnect_attempts), 30)
-                            logger.info(f"Waiting {wait_time} seconds before reconnection attempt {self.reconnect_attempts + 1}")
-                            time.sleep(wait_time)
                         
                         self.cap = cv2.VideoCapture(self.stream_url)
                         
@@ -224,85 +236,74 @@ class ObjectDetector:
                             self.cap.set(cv2.CAP_PROP_BUFFERSIZE, self.frame_buffer_size)
                             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
                             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+                            self.cap.set(cv2.CAP_PROP_FPS, self.target_fps)
+                            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, self.frame_buffer_size)
                         
-                        # Wait for connection to establish
-                        time.sleep(1)
+                        time.sleep(0.5)  # Reduced wait time
                         
-                        # Check if reconnection was successful
                         if not self.cap.isOpened():
                             self.reconnect_attempts += 1
-                            logger.error(f"Reconnection attempt {self.reconnect_attempts}/{self.max_reconnect_attempts} failed")
-                            
                             if self.reconnect_attempts >= self.max_reconnect_attempts:
-                                logger.error(f"Failed to reconnect after {self.max_reconnect_attempts} attempts, stopping detection")
+                                logger.error(f"Failed to reconnect after {self.max_reconnect_attempts} attempts")
                                 self.is_running = False
                                 break
-                                
                             continue
                         else:
-                            # Reset counter on successful reconnection
                             self.reconnect_attempts = 0
                             logger.info("Successfully reconnected to camera")
                     except Exception as e:
                         logger.exception(f"Error reconnecting to camera: {str(e)}")
-                        time.sleep(2)  # Wait before retrying
+                        time.sleep(1)
                     continue
 
-                # Attempt to read a frame with timeout protection
-                frame_read_success = False
-                ret, frame = None, None
-                
-                try:
-                    # Set a timeout for frame reading
-                    start_time = time.time()
+                # Read frame with retry
+                ret = False
+                frame = None
+                retry_count = 0
+                max_retries = 2  # Reduced retries
+
+                while not ret and retry_count < max_retries:
                     ret, frame = self.cap.read()
-                    if time.time() - start_time > 10:  # If frame reading takes more than 10 seconds
-                        logger.warning("Frame reading took too long, may be stuck")
-                        # Force a reconnection
+                    if not ret:
+                        retry_count += 1
+                        time.sleep(0.05)  # Reduced sleep time
+                        continue
+                    break
+
+                if not ret or frame is None:
+                    consecutive_errors += 1
+                    if consecutive_errors >= max_consecutive_errors:
+                        logger.error(f"Too many consecutive frame read errors ({consecutive_errors})")
+                        consecutive_errors = 0
                         if self.cap is not None:
                             self.cap.release()
                             self.cap = None
-                        continue
-                        
-                    frame_read_success = True
-                except Exception as e:
-                    logger.exception(f"Exception during frame reading: {str(e)}")
-                
-                if not frame_read_success or not ret or frame is None:
-                    logger.warning("Failed to read frame from stream")
-                    consecutive_errors += 1
-                    logger.debug(f"Consecutive frame read errors: {consecutive_errors}/{max_consecutive_errors}")
-                    
-                    if consecutive_errors >= max_consecutive_errors:
-                        logger.error(f"Too many consecutive frame read errors ({consecutive_errors}), attempting camera reconnection")
-                        consecutive_errors = 0
-                        # Force reconnection
-                        try:
-                            if self.cap is not None:
-                                self.cap.release()
-                            time.sleep(2)  # Wait before reconnecting
-                            self.cap = cv2.VideoCapture(self.stream_url)
-                            logger.info("Camera reconnection attempted")
-                        except Exception as e:
-                            logger.exception(f"Error during camera reconnection: {str(e)}")
-                    
-                    time.sleep(1)  # Wait before next attempt
+                    time.sleep(0.05)
                     continue
-                
-                # Reset error counter on successful frame read
+
+                # Reset error counter
                 consecutive_errors = 0
                 last_detection_time = current_time
+                frame_count += 1
+
+                # Skip frames to maintain performance
+                if frame_count % (self.skip_frames + 1) != 0:
+                    continue
 
                 # Run detection
                 try:
+                    # Resize frame before detection for better performance
+                    h, w = frame.shape[:2]
+                    if max(h, w) > 640:
+                        scale = 640 / max(h, w)
+                        new_h, new_w = int(h * scale), int(w * scale)
+                        frame = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+
                     results = self.model(frame, conf=config.CONFIDENCE_THRESHOLD)
                     
                     # Process results
                     detections = []
-                    # Create a copy of the frame for drawing boxes
                     frame_with_boxes = frame.copy()
-                    
-                    # Initialize person counter
                     person_count = 0
                     
                     for r in results:
@@ -313,21 +314,16 @@ class ObjectDetector:
                                 conf = float(box.conf.item())
                                 cls_name = self.model.names[cls_id]
                                 
-                                # Only process person detections
                                 if cls_name.lower() != 'person':
                                     continue
                                     
-                                # Increment person counter
                                 person_count += 1
-                                    
-                                xyxy = box.xyxy.tolist()[0]  # Get box coordinates
+                                xyxy = box.xyxy.tolist()[0]
                                 
-                                # Draw bounding box
                                 x1, y1, x2, y2 = map(int, xyxy)
-                                color = (0, 255, 0)  # Green color for box
+                                color = (0, 255, 0)
                                 cv2.rectangle(frame_with_boxes, (x1, y1), (x2, y2), color, 2)
                                 
-                                # Add label
                                 label = f"{cls_name}: {conf:.2f}"
                                 cv2.putText(frame_with_boxes, label, (x1, y1 - 10), 
                                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
@@ -338,57 +334,46 @@ class ObjectDetector:
                                     'box': xyxy
                                 })
                             except Exception as e:
-                                logger.error(f"Error processing detection box: {str(e)}")
                                 continue
                     
-                    # Add timestamp and person count to the frame
+                    # Add timestamp and person count
                     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     cv2.putText(frame_with_boxes, f"Time: {timestamp}", (10, 30), 
                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                     cv2.putText(frame_with_boxes, f"People Detected: {person_count}", (10, 60), 
                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                     
-                    # Send frame to callback if available
+                    # Send frame to callback
                     if self.frame_callback and frame_with_boxes is not None:
                         try:
-                            # Resize frame for streaming (to reduce bandwidth)
-                            h, w = frame_with_boxes.shape[:2]
-                            max_dim = 480  # Reduced from 640 for better performance
-                            if max(h, w) > max_dim:
-                                scale = max_dim / max(h, w)
-                                new_h, new_w = int(h * scale), int(w * scale)
-                                # Use INTER_AREA for downsampling (better quality for streaming)
-                                frame_with_boxes = cv2.resize(frame_with_boxes, (new_w, new_h), 
-                                                            interpolation=cv2.INTER_AREA)
+                            # Calculate time since last frame
+                            current_time = time.time()
+                            elapsed = current_time - self.last_frame_time
                             
-                            # Skip frames to reduce processing load
-                            current_ms = int(time.time() * 1000)
-                            if not hasattr(self, '_last_callback_time') or current_ms - getattr(self, '_last_callback_time', 0) >= 33:  # ~30fps
+                            # Only send frame if enough time has passed
+                            if elapsed >= self.frame_time:
                                 self.frame_callback(frame_with_boxes)
-                                self._last_callback_time = current_ms
+                                self.last_frame_time = current_time
                         except Exception as e:
                             logger.exception(f"Error in frame callback: {str(e)}")
                     
-                    # Send notifications and log detections
+                    # Process detections
                     if detections:
                         try:
-                            # Add person count to the notification
                             self.process_detections(detections, frame, person_count)
                         except Exception as e:
                             logger.exception(f"Error processing detections: {str(e)}")
                 
                 except Exception as e:
                     logger.exception(f"Error during detection: {str(e)}")
-                    time.sleep(0.5)  # Add short delay to prevent rapid error loops
+                    time.sleep(0.05)
             
             except Exception as e:
                 logger.exception(f"Critical error in detection loop: {str(e)}")
-                time.sleep(1)  # Add delay to prevent rapid error loops
+                time.sleep(0.05)
         
-        # Record exit reason        
         logger.info(f"Detection loop ended. is_running={self.is_running}")
         
-        # Clean up resources when loop ends
         try:
             if self.cap is not None:
                 self.cap.release()
@@ -541,17 +526,12 @@ class ObjectDetector:
             logger.debug(f"Notification error details: {traceback.format_exc()}")
 
     def log_detection(self, object_class, confidence, person_count):
-        """Log detection to Supabase"""
+        """Log detection to both MongoDB and Supabase"""
         try:
-            timestamp = datetime.now().isoformat()
+            timestamp = datetime.now()
             
-            headers = {
-                "apikey": self.supabase_key,
-                "Content-Type": "application/json",
-                "Prefer": "return=minimal"
-            }
-            
-            data = {
+            # Create detection event data
+            event_data = {
                 "created_at": timestamp,
                 "user_id": self.user_id,
                 "object_type": object_class,
@@ -559,16 +539,39 @@ class ObjectDetector:
                 "person_count": person_count
             }
             
-            url = f"{self.supabase_url}/rest/v1/detection_events"
-            response = requests.post(url, json=data, headers=headers)
+            # Log to MongoDB
+            try:
+                from app import db
+                db.detection_events.insert_one(event_data)
+                logger.info(f"Detection logged to MongoDB: {object_class}")
+            except Exception as e:
+                logger.error(f"Error logging to MongoDB: {str(e)}")
             
-            if response.status_code in (201, 200):
-                logger.info(f"Detection logged to Supabase: {object_class}")
-            else:
-                logger.error(f"Failed to log detection: {response.status_code} - {response.text}")
+            # Log to Supabase if enabled
+            if self.enable_logging and self.supabase_url and self.supabase_key:
+                try:
+                    headers = {
+                        "apikey": self.supabase_key,
+                        "Content-Type": "application/json",
+                        "Prefer": "return=minimal"
+                    }
+                    
+                    # Convert timestamp to ISO format for Supabase
+                    supabase_data = event_data.copy()
+                    supabase_data["created_at"] = timestamp.isoformat()
+                    
+                    url = f"{self.supabase_url}/rest/v1/detection_events"
+                    response = requests.post(url, json=supabase_data, headers=headers)
+                    
+                    if response.status_code in (201, 200):
+                        logger.info(f"Detection logged to Supabase: {object_class}")
+                    else:
+                        logger.error(f"Failed to log to Supabase: {response.status_code} - {response.text}")
+                except Exception as e:
+                    logger.error(f"Error logging to Supabase: {str(e)}")
         
         except Exception as e:
-            logger.error(f"Error logging detection: {str(e)}")
+            logger.error(f"Error in log_detection: {str(e)}")
 
 # Create a singleton instance
 detector = ObjectDetector() 

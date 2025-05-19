@@ -1,119 +1,310 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from 'react';
+import {
+  Box,
+  Card,
+  CardContent,
+  Typography,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Paper,
+  CircularProgress,
+  Alert,
+  Button,
+  TextField,
+  MenuItem,
+} from '@mui/material';
+import { Grid as MuiGrid } from '@mui/material';
+import { DatePicker } from '@mui/x-date-pickers/DatePicker';
+import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
+import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
+import { format, subDays } from 'date-fns';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
+import { useRouter } from 'next/navigation';
 
 interface DetectionEvent {
   _id: string;
-  createdAt: string;
-  objectType: string;
+  created_at: string;
+  object_type: string;
   confidence: number;
-  userId: string;
-  imageUrl?: string;
+  person_count: number;
 }
 
-export default function DetectionHistory() {
+interface DailyStats {
+  date: string;
+  count: number;
+}
+
+interface DetectionStats {
+  daily_stats: DailyStats[];
+  total_detections: number;
+  max_people_detected: number;
+}
+
+const DetectionHistory: React.FC = () => {
   const [events, setEvents] = useState<DetectionEvent[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [stats, setStats] = useState<DetectionStats | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [startDate, setStartDate] = useState<Date>(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000));
+  const [endDate, setEndDate] = useState<Date>(new Date());
+  const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
+  const [autoRefresh, setAutoRefresh] = useState(true);
+  const router = useRouter();
 
-  useEffect(() => {
-    fetchDetectionEvents();
-  }, []);
-
-  const fetchDetectionEvents = async () => {
-    setIsLoading(true);
+  const fetchDetectionHistory = useCallback(async () => {
     try {
-      const response = await fetch('/api/detection/events');
-      if (!response.ok) {
-        throw new Error('Failed to fetch detection events');
+      setLoading(true);
+      setError(null);
+      
+      const params = new URLSearchParams();
+      params.append('start_date', startDate.toISOString());
+      params.append('end_date', endDate.toISOString());
+      params.append('limit', '100');
+      params.append('offset', '0');
+
+      const response = await fetch(`http://localhost:5000/api/detection/history?${params}`, {
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (response.status === 401) {
+        setError('Session expired. Please log in again.');
+        router.push('/auth/login');
+        return;
       }
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch detection history');
+      }
+
       const data = await response.json();
-      setEvents(data || []);
+      if (data.success) {
+        setEvents(data.data);
+        setLastUpdate(new Date());
+      } else {
+        setError(data.error || 'Failed to fetch detection history');
+      }
     } catch (error) {
-      toast.error("An unexpected error occurred");
-      console.error(error);
+      console.error('Error fetching history:', error);
+      setError('Failed to fetch detection history');
     } finally {
-      setIsLoading(false);
+      setLoading(false);
     }
+  }, [startDate, endDate, router]);
+
+  const fetchDetectionStats = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      
+      const params = new URLSearchParams();
+      params.append('start_date', startDate.toISOString());
+      params.append('end_date', endDate.toISOString());
+
+      const response = await fetch(`http://localhost:5000/api/detection/history/stats?${params}`, {
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (response.status === 401) {
+        setError('Session expired. Please log in again.');
+        router.push('/auth/login');
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch detection stats');
+      }
+
+      const data = await response.json();
+      if (data.success) {
+        setStats(data.data);
+        setLastUpdate(new Date());
+      } else {
+        setError(data.error || 'Failed to fetch detection stats');
+      }
+    } catch (error) {
+      console.error('Error fetching stats:', error);
+      setError('Failed to fetch detection stats');
+    } finally {
+      setLoading(false);
+    }
+  }, [startDate, endDate, router]);
+
+  // Initial data fetch
+  useEffect(() => {
+    fetchDetectionHistory();
+    fetchDetectionStats();
+  }, [fetchDetectionHistory, fetchDetectionStats]);
+
+  // Auto-refresh data every 30 seconds if enabled
+  useEffect(() => {
+    if (!autoRefresh) return;
+
+    const interval = setInterval(() => {
+      fetchDetectionHistory();
+      fetchDetectionStats();
+    }, 30000); // 30 seconds
+
+    return () => clearInterval(interval);
+  }, [autoRefresh, fetchDetectionHistory, fetchDetectionStats]);
+
+  const handleDateRangeChange = (days: number) => {
+    const end = new Date();
+    const start = new Date(end.getTime() - days * 24 * 60 * 60 * 1000);
+    setStartDate(start);
+    setEndDate(end);
   };
 
-  const formatDate = (dateString: string) => {
-    const date = new Date(dateString);
-    return new Intl.DateTimeFormat("en-US", {
-      year: "numeric",
-      month: "short",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-    }).format(date);
+  const toggleAutoRefresh = () => {
+    setAutoRefresh(!autoRefresh);
   };
+
+  if (loading && events.length === 0) {
+    return (
+      <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
+        <CircularProgress />
+      </Box>
+    );
+  }
+
+  if (error) {
+    return (
+      <Box p={3}>
+        <Alert severity="error">{error}</Alert>
+      </Box>
+    );
+  }
 
   return (
-    <div className="space-y-4">
-      <div className="flex justify-between items-center">
-        <h3 className="text-lg font-medium">Recent Detections</h3>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={fetchDetectionEvents}
-          disabled={isLoading}
-        >
-          {isLoading ? "Loading..." : "Refresh"}
-        </Button>
-      </div>
+    <Box p={3}>
+      <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
+        <Typography variant="h4">
+          Detection History
+        </Typography>
+        <Box display="flex" alignItems="center" gap={2}>
+          <Typography variant="body2" color="text.secondary">
+            Last updated: {lastUpdate.toLocaleTimeString()}
+          </Typography>
+          <Button
+            variant="outlined"
+            size="small"
+            onClick={toggleAutoRefresh}
+            color={autoRefresh ? "primary" : "inherit"}
+          >
+            {autoRefresh ? "Auto-refresh ON" : "Auto-refresh OFF"}
+          </Button>
+          <Button
+            variant="outlined"
+            size="small"
+            onClick={() => {
+              fetchDetectionHistory();
+              fetchDetectionStats();
+            }}
+          >
+            Refresh Now
+          </Button>
+        </Box>
+      </Box>
 
-      {isLoading ? (
-        <div className="text-center py-8">Loading events...</div>
-      ) : events.length === 0 ? (
-        <div className="text-center py-8 text-gray-500">
-          No detection events found. Start a detection session to begin logging
-          events.
-        </div>
-      ) : (
-        <div className="border rounded-lg overflow-hidden">
-          <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-            <thead className="bg-gray-50 dark:bg-slate-800">
-              <tr>
-                <th
-                  scope="col"
-                  className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider"
-                >
-                  Time
-                </th>
-                <th
-                  scope="col"
-                  className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider"
-                >
-                  Object Type
-                </th>
-                <th
-                  scope="col"
-                  className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider"
-                >
-                  Confidence
-                </th>
-              </tr>
-            </thead>
-            <tbody className="bg-white dark:bg-slate-900 divide-y divide-gray-200 dark:divide-gray-700">
-              {events.map((event) => (
-                <tr key={event._id}>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">
-                    {formatDate(event.createdAt)}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">
-                    {event.objectType}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">
-                    {(event.confidence * 100).toFixed(2)}%
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+      {/* Date Range Selection */}
+      <Box mb={3} display="flex" gap={2} alignItems="center">
+        <Button variant="outlined" onClick={() => handleDateRangeChange(7)}>Last 7 Days</Button>
+        <Button variant="outlined" onClick={() => handleDateRangeChange(30)}>Last 30 Days</Button>
+        <Button variant="outlined" onClick={() => handleDateRangeChange(90)}>Last 90 Days</Button>
+        <LocalizationProvider dateAdapter={AdapterDateFns}>
+          <DatePicker
+            label="Start Date"
+            value={startDate}
+            onChange={(date) => date && setStartDate(date)}
+          />
+          <DatePicker
+            label="End Date"
+            value={endDate}
+            onChange={(date) => date && setEndDate(date)}
+          />
+        </LocalizationProvider>
+      </Box>
+
+      {/* Stats Summary */}
+      {stats && (
+        <Box mb={3}>
+          <Typography variant="h6" gutterBottom>
+            Summary
+          </Typography>
+          <Box display="flex" gap={3}>
+            <Paper sx={{ p: 2 }}>
+              <Typography variant="subtitle1">Total Detections</Typography>
+              <Typography variant="h4">{stats.total_detections}</Typography>
+            </Paper>
+            <Paper sx={{ p: 2 }}>
+              <Typography variant="subtitle1">Max People Detected</Typography>
+              <Typography variant="h4">{stats.max_people_detected}</Typography>
+            </Paper>
+          </Box>
+        </Box>
       )}
-    </div>
+
+      {/* Chart */}
+      {stats && stats.daily_stats.length > 0 && (
+        <Box mb={3}>
+          <Typography variant="h6" gutterBottom>
+            Detection Trends
+          </Typography>
+          <Paper sx={{ p: 2 }}>
+            <LineChart width={800} height={300} data={stats.daily_stats}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="date" />
+              <YAxis />
+              <Tooltip />
+              <Legend />
+              <Line type="monotone" dataKey="count" stroke="#8884d8" name="Detections" />
+            </LineChart>
+          </Paper>
+        </Box>
+      )}
+
+      {/* Recent Detections Table */}
+      <Typography variant="h6" gutterBottom>
+        Recent Detections
+      </Typography>
+      <TableContainer component={Paper}>
+        <Table>
+          <TableHead>
+            <TableRow>
+              <TableCell>Date</TableCell>
+              <TableCell>Time</TableCell>
+              <TableCell>Object Type</TableCell>
+              <TableCell>Confidence</TableCell>
+              <TableCell>People Count</TableCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {events.map((event) => (
+              <TableRow key={event._id}>
+                <TableCell>{format(new Date(event.created_at), 'yyyy-MM-dd')}</TableCell>
+                <TableCell>{format(new Date(event.created_at), 'HH:mm:ss')}</TableCell>
+                <TableCell>{event.object_type}</TableCell>
+                <TableCell>{(event.confidence * 100).toFixed(1)}%</TableCell>
+                <TableCell>{event.person_count}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </TableContainer>
+    </Box>
   );
-}
+};
+
+export default DetectionHistory;
