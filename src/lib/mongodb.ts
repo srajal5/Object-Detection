@@ -1,21 +1,10 @@
 import mongoose from 'mongoose';
 
-// Validate MongoDB URI format
-const validateMongoURI = (uri: string) => {
-  if (!uri) return false;
-  if (uri.startsWith('mongodb://') || uri.startsWith('mongodb+srv://')) return true;
-  return false;
-};
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/object-detection';
 
-// Get MongoDB URI from environment
-if (!process.env.MONGODB_URI || !validateMongoURI(process.env.MONGODB_URI)) {
-  throw new Error(
-    'Invalid MONGODB_URI. Please define a valid MongoDB URI in your environment variables. ' +
-    'It should start with mongodb:// or mongodb+srv://'
-  );
+if (!MONGODB_URI) {
+  throw new Error('Please define the MONGODB_URI environment variable inside .env.local');
 }
-
-const MONGODB_URI = process.env.MONGODB_URI;
 
 interface MongooseCache {
   conn: typeof mongoose | null;
@@ -40,30 +29,17 @@ export async function connectDB() {
   if (!cached.promise) {
     const opts = {
       bufferCommands: false,
-      serverSelectionTimeoutMS: 5000, // Timeout after 5s
-      socketTimeoutMS: 45000, // Close sockets after 45s
-      family: 4, // Use IPv4
-      maxPoolSize: 10, // Maximum number of connections in the pool
-      minPoolSize: 1 // Minimum number of connections in the pool
     };
 
-    console.log('Connecting to MongoDB...');
-    cached.promise = mongoose.connect(MONGODB_URI, opts)
-      .then((mongoose) => {
-        console.log('MongoDB connected successfully');
-        return mongoose;
-      })
-      .catch((error) => {
-        console.error('MongoDB connection error:', error);
-        throw error;
-      });
+    cached.promise = mongoose.connect(MONGODB_URI, opts).then((mongoose) => {
+      return mongoose;
+    });
   }
 
   try {
     cached.conn = await cached.promise;
   } catch (e) {
     cached.promise = null;
-    console.error('Failed to connect to MongoDB:', e);
     throw e;
   }
 
