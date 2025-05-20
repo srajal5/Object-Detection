@@ -31,7 +31,7 @@ interface DetectionSettingsFormData {
   frameBufferSize: number;
 }
 
-const DETECTION_API_URL = process.env.NEXT_PUBLIC_DETECTION_API_URL || 'https://object-detection-backend.vercel.app';
+const DETECTION_API_URL = process.env.NEXT_PUBLIC_DETECTION_API_URL || 'http://localhost:5000';
 
 export default function DetectionSettings() {
   const [isSessionRunning, setIsSessionRunning] = useState(false);
@@ -138,6 +138,13 @@ export default function DetectionSettings() {
       setIsLoading(true);
       const formValues = form.getValues();
       
+      // Validate camera source first
+      if (!formValues.cameraSource) {
+        toast.error("Please select a camera source");
+        setIsLoading(false);
+        return;
+      }
+      
       // Prepare request body
       const requestBody = {
         cameraSource: formValues.cameraSource,
@@ -190,8 +197,12 @@ export default function DetectionSettings() {
 
         default:
           // For physical cameras, use the device ID
-          if (formValues.cameraSource.startsWith('camera-') || formValues.cameraSource.includes('videoinput')) {
+          if (formValues.cameraSource && (formValues.cameraSource.startsWith('camera-') || formValues.cameraSource.includes('videoinput'))) {
             requestBody.ipCameraUrl = `webcam://${formValues.cameraSource}`;
+          } else {
+            toast.error("Invalid camera source selected");
+            setIsLoading(false);
+            return;
           }
       }
 

@@ -52,11 +52,20 @@ const DetectionHistory: React.FC = () => {
   const [stats, setStats] = useState<DetectionStats | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [startDate, setStartDate] = useState<Date>(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000));
-  const [endDate, setEndDate] = useState<Date>(new Date());
-  const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
+  const [startDate, setStartDate] = useState<Date>(() => {
+    const date = new Date();
+    date.setDate(date.getDate() - 7); // 7 days ago
+    return date;
+  });
+  const [endDate, setEndDate] = useState<Date>(() => new Date());
+  const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const router = useRouter();
+
+  // Set initial lastUpdate after component mounts
+  useEffect(() => {
+    setLastUpdate(new Date());
+  }, []);
 
   const fetchDetectionHistory = useCallback(async () => {
     try {
@@ -69,6 +78,12 @@ const DetectionHistory: React.FC = () => {
       params.append('limit', '100');
       params.append('offset', '0');
 
+      console.log('Date range:', {
+        start: startDate.toISOString(),
+        end: endDate.toISOString()
+      });
+      console.log('Fetching detection history with params:', params.toString());
+      
       const response = await fetch(`http://localhost:5000/api/detection/history?${params}`, {
         credentials: 'include',
         headers: {
@@ -87,9 +102,18 @@ const DetectionHistory: React.FC = () => {
       }
 
       const data = await response.json();
+      console.log('Received detection history data:', {
+        success: data.success,
+        count: data.count,
+        dataLength: data.data?.length,
+        firstItem: data.data?.[0],
+        lastItem: data.data?.[data.data?.length - 1]
+      });
+      
       if (data.success) {
         setEvents(data.data);
         setLastUpdate(new Date());
+        console.log('Updated events and lastUpdate timestamp');
       } else {
         setError(data.error || 'Failed to fetch detection history');
       }
@@ -195,7 +219,7 @@ const DetectionHistory: React.FC = () => {
         </Typography>
         <Box display="flex" alignItems="center" gap={2}>
           <Typography variant="body2" color="text.secondary">
-            Last updated: {lastUpdate.toLocaleTimeString()}
+            Last updated: {lastUpdate ? format(lastUpdate, 'HH:mm:ss') : '--:--:--'}
           </Typography>
           <Button
             variant="outlined"
