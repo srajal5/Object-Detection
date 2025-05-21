@@ -1,162 +1,142 @@
-# Object Detection Dashboard
+# Real-Time Object Detection System
 
-A web application for real-time object detection using computer vision with a modern dashboard interface.
+A modern web application that performs real-time object detection using YOLOv8 and provides a user-friendly interface for monitoring and managing detections.
 
-## Features
+## 🌟 Features
 
-- Real-time video feed with object detection
-- Detection Settings Dashboard:
-  - Multiple camera source options (System Default, IP Camera, Physical Cameras)
-  - Camera connection testing
-  - NTFY Notification Configuration
-  - Advanced settings (logging, person detection, stream quality)
-  - Session Control (Start/Stop)
-- Detection History with:
-  - Interactive timeline view
-  - Detailed detection logs
-  - Statistics and trends
-  - Date range filtering
-  - Auto-refresh capability
-- User Profile Management
-- Python backend for YOLOv8-based object detection
+- **Real-time Object Detection**: Powered by YOLOv8 for accurate and fast detection
+- **User Authentication**: Secure login and registration system
+- **Profile Management**: Update and manage user profiles
+- **Live Video Feed**: Real-time video streaming with detection overlays
+- **Responsive Design**: Works seamlessly on desktop and mobile devices
+- **Dark Mode Support**: Comfortable viewing in any lighting condition
 
-## Tech Stack
+## 🚀 Tech Stack
 
 ### Frontend
-
-- Next.js 14
 - React 18
 - TypeScript
-- Tailwind CSS
-- Shadcn UI
-- Material-UI (MUI)
-- Recharts for data visualization
-- Date-fns for date handling
+- Material-UI
+- WebSocket for real-time communication
+- Axios for API requests
 
 ### Backend
-
 - Python 3.8+
-- Flask REST API
-- OpenCV for video processing
-- Ultralytics YOLOv8 for object detection
-- NTFY.sh for push notifications
+- Flask
+- YOLOv8 (Ultralytics)
+- OpenCV
+- WebSocket support
 
-## Project Structure
-
-```
-ObjectDetection/           # Main project folder
-├── src/                   # Next.js frontend code
-│   ├── app/              # Next.js app router pages
-│   │   ├── auth/        # Authentication pages
-│   │   └── dashboard/   # Dashboard pages
-│   ├── components/      # React components
-│   │   ├── auth/       # Authentication components
-│   │   ├── dashboard/  # Dashboard components
-│   │   └── ui/         # UI components
-│   └── lib/            # Utility functions and libraries
-└── python-backend/      # Python backend for object detection
-    ├── app.py          # Flask API server
-    ├── detector.py     # YOLOv8 object detection module
-    ├── config.py       # Backend configuration
-    └── requirements.txt # Python dependencies
-```
-
-## Getting Started
+## 🛠️ Installation
 
 ### Prerequisites
+- Node.js (v14 or higher)
+- Python 3.8 or higher
+- Git
 
-- Node.js 18+ and npm
-- Python 3.8+ with pip
-- Webcam or IP camera
-- YOLOv8 model file
+### Frontend Setup
+```bash
+# Clone the repository
+git clone https://github.com/srajal5/Object-Detection.git
 
-### Frontend Installation
+# Navigate to frontend directory
+cd frontend
 
-1. Clone the repository:
-   ```bash
-   git clone <repository-url>
-   cd ObjectDetection
-   ```
+# Install dependencies
+npm install
 
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
+# Start development server
+npm run dev
+```
 
-3. Create a `.env.local` file in the root directory:
-   ```bash
-   NEXT_PUBLIC_DETECTION_API_URL=http://localhost:5000
-   ```
+### Backend Setup
+```bash
+# Navigate to backend directory
+cd python-backend
 
-4. Run the development server:
-   ```bash
-   npm run dev
-   ```
+# Create virtual environment
+python -m venv venv
 
-5. Open [http://localhost:3000](http://localhost:3000) in your browser.
+# Activate virtual environment
+# On Windows:
+venv\Scripts\activate
+# On Unix or MacOS:
+source venv/bin/activate
 
-### Python Backend Setup
+# Install dependencies
+pip install -r requirements.txt
 
-1. Install Python dependencies:
-   ```bash
-   cd python-backend
-   pip install -r requirements.txt
-   ```
+# Start the server
+python app.py
+```
 
-2. Start the backend server:
-   ```bash
-   python app.py
-   ```
+## 📝 Environment Variables
 
-## Usage
+### Frontend (.env)
+```
+VITE_API_URL=http://localhost:5000
+```
 
-1. Access the dashboard at http://localhost:3000/dashboard
-2. Configure your camera settings:
-   - Choose camera source (System Default, IP Camera, or Physical Camera)
-   - Test camera connection
-   - Adjust stream quality and frame buffer size
-3. Configure notifications (optional):
-   - Set up NTFY topic for push notifications
-   - Choose notification priority
-4. Start detection:
-   - Click "Start Detection" to begin monitoring
-   - View real-time detections in the video feed
-   - Monitor detection history and statistics
-5. View detection history:
-   - Filter by date range
-   - View detection trends
-   - Check detailed detection logs
-   - Enable auto-refresh for real-time updates
+### Backend (.env)
+```
+MODEL_PATH=yolov8n.pt
+CONFIDENCE_THRESHOLD=0.3
+```
 
-## NTFY Notifications
+## 🎯 Usage
 
-This project uses [ntfy.sh](https://ntfy.sh/) for push notifications. To receive notifications:
+1. Register a new account or login with existing credentials
+2. Access the dashboard to view the live video feed
+3. The system will automatically detect objects in the video stream
+4. Update your profile information as needed
+5. Monitor detection results in real-time
 
-1. Enter a unique topic name in the NTFY configuration
-2. Subscribe to your topic via:
-   - Web: https://ntfy.sh/your-topic
-   - Mobile app: Download the NTFY app and subscribe to your topic
-   - Command line: `curl -s https://ntfy.sh/your-topic/json`
+## 🔧 Configuration
 
-## Development
+- Adjust detection confidence threshold in `config.py`
+- Modify video stream settings in `detector.py`
+- Customize UI theme in frontend components
 
-The project uses modern development practices:
+## 🤝 Contributing
 
-- TypeScript for type safety
-- ESLint and Prettier for code formatting
-- Component-based architecture
-- Responsive design with Tailwind CSS
-- Real-time updates with auto-refresh
-- Error handling and loading states
-
-## Contributing
+Contributions are welcome! Please feel free to submit a Pull Request.
 
 1. Fork the repository
-2. Create your feature branch
-3. Commit your changes
-4. Push to the branch
-5. Create a Pull Request
+2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
+3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
+4. Push to the branch (`git push origin feature/AmazingFeature`)
+5. Open a Pull Request
 
-## License
+## 📄 License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 👥 Authors
+
+- **Srajal** - *Initial work* - [srajal5](https://github.com/srajal5)
+
+## 🙏 Acknowledgments
+
+- YOLOv8 team for the amazing object detection model
+- Flask team for the backend framework
+- React team for the frontend framework
+- All contributors who have helped improve this project
+
+## 📞 Support
+
+If you encounter any issues or have questions, please:
+1. Check the [Issues](https://github.com/srajal5/Object-Detection/issues) page
+2. Create a new issue if your problem isn't already listed
+3. Provide detailed information about your problem
+
+## 🔄 Updates
+
+- Added user authentication system
+- Implemented profile management
+- Enhanced video streaming performance
+- Added dark mode support
+- Improved error handling and user feedback
+
+---
+
+Made with by Srajal and Siddharth dev
