@@ -8,9 +8,9 @@ echo "Installing required packages..."
 pip3 install -r requirements.txt
 
 # Check if the model exists
-if [ ! -f yolo11m.pt ]; then
-    echo "Model file yolo11m.pt not found in the current directory!"
-    echo "Please make sure to place your YOLOv11m.pt model in this directory."
+if [ ! -f yolov8n.pt ]; then
+    echo "Model file yolov8n.pt not found in the current directory!"
+    echo "Please make sure to place your YOLOv8n.pt model in this directory."
     exit 1
 fi
 

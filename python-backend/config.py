@@ -10,7 +10,7 @@ FLASK_HOST = os.getenv('FLASK_HOST', '0.0.0.0')
 DEBUG = os.getenv('FLASK_DEBUG', 'True').lower() == 'true'
 
 # Model Configuration
-MODEL_PATH = os.getenv('MODEL_PATH', 'yolo11m.pt')
+MODEL_PATH = os.getenv('MODEL_PATH', 'yolov8n.pt')
 
 # Confidence threshold for detections (0-1)
 CONFIDENCE_THRESHOLD = float(os.getenv('CONFIDENCE_THRESHOLD', 0.5))
@@ -29,7 +29,7 @@ FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:3000')
 
 # MongoDB settings
 MONGODB_URI = os.getenv('MONGODB_URI', 'mongodb://localhost:27017')
-MONGODB_DB_NAME = os.getenv('MONGODB_DB_NAME', 'object_detection')
+MONGODB_DB_NAME = os.getenv('MONGODB_DB_NAME', 'object-detection')
 
 # JWT settings
 JWT_SECRET = os.getenv('JWT_SECRET', 'your-secret-key')  # Change this in production 

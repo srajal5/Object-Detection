@@ -1,1 +1,11 @@
- 
+ def load_model(self):
+    """Load the YOLOv8n model"""
+    try:
+        model_path = config.MODEL_PATH
+        logger.info(f"Loading model from {model_path}")
+        self.model = YOLO(model_path)
+        logger.info("Model loaded successfully")
+        return True
+    except Exception as e:
+        logger.exception(f"Error loading model: {str(e)}")
+        return False

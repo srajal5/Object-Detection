@@ -1,51 +1,64 @@
 # Object Detection Dashboard
 
-A web application for managing and monitoring IP camera object detection with notification capabilities.
+A web application for real-time object detection using computer vision with a modern dashboard interface.
 
 ## Features
 
-- User authentication (login/registration) using Supabase
+- Real-time video feed with object detection
 - Detection Settings Dashboard:
-  - IP Camera Configuration
+  - Multiple camera source options (System Default, IP Camera, Physical Cameras)
+  - Camera connection testing
   - NTFY Notification Configuration
-  - Supabase Logging Configuration
+  - Advanced settings (logging, person detection, stream quality)
   - Session Control (Start/Stop)
-- Detection History Logs
+- Detection History with:
+  - Interactive timeline view
+  - Detailed detection logs
+  - Statistics and trends
+  - Date range filtering
+  - Auto-refresh capability
 - User Profile Management
-- Python backend for YOLOv11m-based object detection
+- Python backend for YOLOv8-based object detection
 
 ## Tech Stack
 
 ### Frontend
 
-- Next.js 15
-- React 19
+- Next.js 14
+- React 18
 - TypeScript
 - Tailwind CSS
 - Shadcn UI
-- Supabase for authentication and database
-- NTFY.sh for push notifications
+- Material-UI (MUI)
+- Recharts for data visualization
+- Date-fns for date handling
 
 ### Backend
 
 - Python 3.8+
 - Flask REST API
 - OpenCV for video processing
-- Ultralytics YOLOv11m for object detection
+- Ultralytics YOLOv8 for object detection
+- NTFY.sh for push notifications
 
 ## Project Structure
 
 ```
-dashboard/                # Main project folder
-├── src/                  # Next.js frontend code
+ObjectDetection/           # Main project folder
+├── src/                   # Next.js frontend code
 │   ├── app/              # Next.js app router pages
-│   ├── components/       # React components
-│   └── lib/              # Utility functions and libraries
-└── python-backend/       # Python backend for object detection
-    ├── app.py            # Flask API server
-    ├── detector.py       # YOLOv11m object detection module
-    ├── config.py         # Backend configuration
-    └── requirements.txt  # Python dependencies
+│   │   ├── auth/        # Authentication pages
+│   │   └── dashboard/   # Dashboard pages
+│   ├── components/      # React components
+│   │   ├── auth/       # Authentication components
+│   │   ├── dashboard/  # Dashboard components
+│   │   └── ui/         # UI components
+│   └── lib/            # Utility functions and libraries
+└── python-backend/      # Python backend for object detection
+    ├── app.py          # Flask API server
+    ├── detector.py     # YOLOv8 object detection module
+    ├── config.py       # Backend configuration
+    └── requirements.txt # Python dependencies
 ```
 
 ## Getting Started
@@ -54,138 +67,66 @@ dashboard/                # Main project folder
 
 - Node.js 18+ and npm
 - Python 3.8+ with pip
-- Supabase account (for authentication and database)
-- YOLOv11m.pt model file
+- Webcam or IP camera
+- YOLOv8 model file
 
 ### Frontend Installation
 
 1. Clone the repository:
-
    ```bash
    git clone <repository-url>
-   cd dashboard
+   cd ObjectDetection
    ```
 
 2. Install dependencies:
-
    ```bash
    npm install
    ```
 
-3. Create a `.env.local` file in the root directory with the following variables:
-
+3. Create a `.env.local` file in the root directory:
    ```bash
-   # Supabase Configuration
-   NEXT_PUBLIC_SUPABASE_URL=your-supabase-project-url
-   NEXT_PUBLIC_SUPABASE_ANON_KEY=your-supabase-anon-key
-
-   # Python Object Detection API Configuration
    NEXT_PUBLIC_DETECTION_API_URL=http://localhost:5000
    ```
 
-   > **Development Mode**: If you don't provide valid Supabase credentials, the application will automatically run in development mode with mock authentication. This allows you to test and develop the application without setting up Supabase.
-
-
-
-   **profiles table**:
-
-   ```sql
-   create table
-     public.profiles (
-       id uuid not null,
-       full_name text null,
-       created_at timestamp with time zone not null default now(),
-       updated_at timestamp with time zone null,
-       constraint profiles_pkey primary key (id),
-       constraint profiles_id_fkey foreign key (id) references auth.users (id) on delete cascade
-     ) tablespace pg_default;
-   ```
-
-   **detection_settings table**:
-
-   ```sql
-   create table
-     public.detection_settings (
-       id uuid not null default uuid_generate_v4(),
-       user_id uuid not null,
-       ip_camera_url text not null,
-       ip_camera_port text not null,
-       ntfy_topic text not null,
-       ntfy_priority text null,
-       supabase_url text null,
-       supabase_key text null,
-       enable_logging boolean null default false,
-       created_at timestamp with time zone not null default now(),
-       updated_at timestamp with time zone null,
-       constraint detection_settings_pkey primary key (id),
-       constraint detection_settings_user_id_fkey foreign key (user_id) references auth.users (id) on delete cascade
-     ) tablespace pg_default;
-   ```
-
-   **detection_events table**:
-
-   ```sql
-   create table
-     public.detection_events (
-       id uuid not null default uuid_generate_v4(),
-       created_at timestamp with time zone not null default now(),
-       user_id uuid not null,
-       object_type text not null,
-       confidence numeric not null,
-       image_url text null,
-       constraint detection_events_pkey primary key (id),
-       constraint detection_events_user_id_fkey foreign key (user_id) references auth.users (id) on delete cascade
-     ) tablespace pg_default;
-   ```
-
-5. Run the development server:
-
+4. Run the development server:
    ```bash
    npm run dev
    ```
 
-6. Open [http://localhost:3000](http://localhost:3000) in your browser.
+5. Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ### Python Backend Setup
 
-1. Place your `yolo11m.pt` model file in the `python-backend` directory.
-
-2. Install Python dependencies:
-
+1. Install Python dependencies:
    ```bash
    cd python-backend
    pip install -r requirements.txt
    ```
 
-3. Start the backend server:
-
-   - On Windows: `start.bat`
-   - On Linux/Mac: `bash start.sh`
-
-## Development Mode
-
-When running the application without valid Supabase credentials, it will operate in development mode with the following features:
-
-- Mock authentication system that stores users in memory
-- Simulated API responses for user data and detection events
-- All form submissions and actions will work locally without a backend
-- Look for console warnings indicating "Using mock Supabase implementation"
-
-To use development mode:
-
-1. Register with any email and password
-2. Login with those credentials
-3. All dashboard features will work with simulated data
-
-This mode is perfect for UI development and testing without needing to set up a Supabase backend.
+2. Start the backend server:
+   ```bash
+   python app.py
+   ```
 
 ## Usage
 
-1. Register an account or log in
-2. Configure your IP camera settings
-3. Set up NTFY notifications (create a unique topic)
-4. Start a detection session to begin monitoring
-5. View detection history in the History page
+1. Access the dashboard at http://localhost:3000/dashboard
+2. Configure your camera settings:
+   - Choose camera source (System Default, IP Camera, or Physical Camera)
+   - Test camera connection
+   - Adjust stream quality and frame buffer size
+3. Configure notifications (optional):
+   - Set up NTFY topic for push notifications
+   - Choose notification priority
+4. Start detection:
+   - Click "Start Detection" to begin monitoring
+   - View real-time detections in the video feed
+   - Monitor detection history and statistics
+5. View detection history:
+   - Filter by date range
+   - View detection trends
+   - Check detailed detection logs
+   - Enable auto-refresh for real-time updates
 
 ## NTFY Notifications
 
@@ -197,27 +138,25 @@ This project uses [ntfy.sh](https://ntfy.sh/) for push notifications. To receive
    - Mobile app: Download the NTFY app and subscribe to your topic
    - Command line: `curl -s https://ntfy.sh/your-topic/json`
 
-## Deployment
+## Development
 
-### Frontend
+The project uses modern development practices:
 
-This application can be deployed on Vercel:
+- TypeScript for type safety
+- ESLint and Prettier for code formatting
+- Component-based architecture
+- Responsive design with Tailwind CSS
+- Real-time updates with auto-refresh
+- Error handling and loading states
 
-```bash
-npm install -g vercel
-vercel
-```
+## Contributing
 
-### Backend
-
-The Python backend needs to be hosted separately. Options include:
-
-- A dedicated server or VPS running Python 3.8+
-- A containerized solution with Docker
-- Cloud services that support Python applications
-
-Remember to set the `NEXT_PUBLIC_DETECTION_API_URL` environment variable in your frontend deployment to point to your hosted Python backend.
+1. Fork the repository
+2. Create your feature branch
+3. Commit your changes
+4. Push to the branch
+5. Create a Pull Request
 
 ## License
 
-MIT
+This project is licensed under the MIT License - see the LICENSE file for details.

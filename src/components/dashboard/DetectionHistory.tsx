@@ -27,6 +27,7 @@ import { format, subDays } from 'date-fns';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { toast } from "sonner";
 import { useRouter } from 'next/navigation';
+import io from 'socket.io-client';
 
 interface DetectionEvent {
   _id: string;
@@ -61,6 +62,8 @@ const DetectionHistory: React.FC = () => {
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const router = useRouter();
+
+  const socket = io('http://localhost:5000', { transports: ['websocket'] });
 
   // Set initial lastUpdate after component mounts
   useEffect(() => {
@@ -184,6 +187,37 @@ const DetectionHistory: React.FC = () => {
     return () => clearInterval(interval);
   }, [autoRefresh, fetchDetectionHistory, fetchDetectionStats]);
 
+  useEffect(() => {
+    socket.on('new_detection', (data) => {
+      // Format the received data to match the DetectionEvent interface
+      const formattedEvent = {
+        _id: data._id || new Date().getTime().toString(),
+        created_at: data.created_at,
+        object_type: data.object_type,
+        confidence: data.confidence,
+        person_count: data.person_count || 1
+      };
+      
+      setEvents((prev) => [formattedEvent, ...prev]);
+      
+      // Update stats if available
+      if (stats) {
+        setStats(prev => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            total_detections: prev.total_detections + 1,
+            max_people_detected: Math.max(prev.max_people_detected, data.confidence)
+          };
+        });
+      }
+    });
+
+    return () => {
+      socket.off('new_detection');
+    };
+  }, [stats]);
+
   const handleDateRangeChange = (days: number) => {
     const end = new Date();
     const start = new Date(end.getTime() - days * 24 * 60 * 60 * 1000);
@@ -214,11 +248,11 @@ const DetectionHistory: React.FC = () => {
   return (
     <Box p={3}>
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
-        <Typography variant="h4">
+        <Typography variant="h4" className="text-gray-900 dark:text-gray-100">
           Detection History
         </Typography>
         <Box display="flex" alignItems="center" gap={2}>
-          <Typography variant="body2" color="text.secondary">
+          <Typography variant="body2" className="text-gray-600 dark:text-gray-400">
             Last updated: {lastUpdate ? format(lastUpdate, 'HH:mm:ss') : '--:--:--'}
           </Typography>
           <Button
@@ -226,6 +260,7 @@ const DetectionHistory: React.FC = () => {
             size="small"
             onClick={toggleAutoRefresh}
             color={autoRefresh ? "primary" : "inherit"}
+            className="dark:border-gray-600 dark:text-gray-300"
           >
             {autoRefresh ? "Auto-refresh ON" : "Auto-refresh OFF"}
           </Button>
@@ -236,6 +271,7 @@ const DetectionHistory: React.FC = () => {
               fetchDetectionHistory();
               fetchDetectionStats();
             }}
+            className="dark:border-gray-600 dark:text-gray-300"
           >
             Refresh Now
           </Button>
@@ -244,19 +280,85 @@ const DetectionHistory: React.FC = () => {
 
       {/* Date Range Selection */}
       <Box mb={3} display="flex" gap={2} alignItems="center">
-        <Button variant="outlined" onClick={() => handleDateRangeChange(7)}>Last 7 Days</Button>
-        <Button variant="outlined" onClick={() => handleDateRangeChange(30)}>Last 30 Days</Button>
-        <Button variant="outlined" onClick={() => handleDateRangeChange(90)}>Last 90 Days</Button>
+        <Button 
+          variant="outlined" 
+          onClick={() => handleDateRangeChange(7)}
+          className="dark:border-gray-600 dark:text-gray-300"
+        >
+          Last 7 Days
+        </Button>
+        <Button 
+          variant="outlined" 
+          onClick={() => handleDateRangeChange(30)}
+          className="dark:border-gray-600 dark:text-gray-300"
+        >
+          Last 30 Days
+        </Button>
+        <Button 
+          variant="outlined" 
+          onClick={() => handleDateRangeChange(90)}
+          className="dark:border-gray-600 dark:text-gray-300"
+        >
+          Last 90 Days
+        </Button>
         <LocalizationProvider dateAdapter={AdapterDateFns}>
           <DatePicker
             label="Start Date"
             value={startDate}
             onChange={(date) => date && setStartDate(date)}
+            slotProps={{
+              textField: {
+                className: "dark:text-gray-300",
+                sx: {
+                  '& .MuiInputLabel-root': {
+                    color: 'inherit',
+                  },
+                  '& .MuiOutlinedInput-root': {
+                    '& fieldset': {
+                      borderColor: 'inherit',
+                    },
+                    '&:hover fieldset': {
+                      borderColor: 'inherit',
+                    },
+                    '&.Mui-focused fieldset': {
+                      borderColor: 'inherit',
+                    },
+                    '& input': {
+                      color: 'inherit',
+                    },
+                  },
+                }
+              }
+            }}
           />
           <DatePicker
             label="End Date"
             value={endDate}
             onChange={(date) => date && setEndDate(date)}
+            slotProps={{
+              textField: {
+                className: "dark:text-gray-300",
+                sx: {
+                  '& .MuiInputLabel-root': {
+                    color: 'inherit',
+                  },
+                  '& .MuiOutlinedInput-root': {
+                    '& fieldset': {
+                      borderColor: 'inherit',
+                    },
+                    '&:hover fieldset': {
+                      borderColor: 'inherit',
+                    },
+                    '&.Mui-focused fieldset': {
+                      borderColor: 'inherit',
+                    },
+                    '& input': {
+                      color: 'inherit',
+                    },
+                  },
+                }
+              }
+            }}
           />
         </LocalizationProvider>
       </Box>

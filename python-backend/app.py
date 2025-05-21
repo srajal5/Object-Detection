@@ -17,6 +17,7 @@ from functools import wraps
 import requests
 from pymongo import MongoClient
 from bson.objectid import ObjectId
+from flask_socketio import SocketIO, emit
 
 # Configure logging
 logging.basicConfig(
@@ -50,6 +51,8 @@ current_settings = None
 latest_frame = None
 latest_frame_lock = threading.Lock()
 
+socketio = SocketIO(app, cors_allowed_origins=["http://localhost:3000"])
+
 def token_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
@@ -66,6 +69,7 @@ def token_required(f):
             
         try:
             data = jwt.decode(token, config.JWT_SECRET, algorithms=["HS256"])
+            logger.info(f"Token payload: {data}")  # Add logging
             current_user = data
         except:
             return jsonify({'message': 'Token is invalid'}), 401
@@ -151,19 +155,23 @@ def generate_frames():
     """Generate frames for MJPEG streaming"""
     global latest_frame
     last_frame_time = time.time()
-    frame_interval = 0.033  # Target ~30 FPS (33ms between frames)
+    frame_interval = 0.05  # Target 20 FPS (50ms between frames) instead of 30 FPS
+    frame_skip = 0  # Counter for frame skipping
+    max_frame_skip = 2  # Maximum number of frames to skip
     
     while True:
-        # Control frame rate to avoid overwhelming the network
         current_time = time.time()
         time_since_last_frame = current_time - last_frame_time
         
+        # Skip frames if we're falling behind
         if time_since_last_frame < frame_interval:
-            # Sleep just enough time to maintain target frame rate
-            sleep_time = max(0.001, frame_interval - time_since_last_frame)
-            time.sleep(sleep_time)
+            frame_skip += 1
+            if frame_skip > max_frame_skip:
+                # If we've skipped too many frames, sleep briefly
+                time.sleep(0.001)
             continue
             
+        frame_skip = 0
         last_frame_time = current_time
             
         # If detection is not active or no frame is available, generate blank frame
@@ -173,8 +181,8 @@ def generate_frames():
             text = "Camera feed not available" if not detection_active else "Waiting for camera feed..."
             cv2.putText(blank_frame, text, (50, 240), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
             
-            # Encode frame to JPEG with optimized quality
-            encode_params = [int(cv2.IMWRITE_JPEG_QUALITY), 80]  # Lower quality for faster transmission
+            # Encode frame to JPEG with lower quality for faster transmission
+            encode_params = [int(cv2.IMWRITE_JPEG_QUALITY), 60]  # Reduced quality
             _, buffer = cv2.imencode('.jpg', blank_frame, encode_params)
             frame_bytes = buffer.tobytes()
             
@@ -188,8 +196,20 @@ def generate_frames():
                     frame_to_encode = latest_frame.copy()
                 
             if frame_to_encode is not None:
-                # Encode frame to JPEG with optimized quality
-                encode_params = [int(cv2.IMWRITE_JPEG_QUALITY), 80]  # Lower quality for faster transmission
+                # Resize frame if it's too large
+                height, width = frame_to_encode.shape[:2]
+                if width > 1280 or height > 720:
+                    scale = min(1280/width, 720/height)
+                    new_width = int(width * scale)
+                    new_height = int(height * scale)
+                    frame_to_encode = cv2.resize(frame_to_encode, (new_width, new_height))
+                
+                # Encode frame to JPEG with optimized settings
+                encode_params = [
+                    int(cv2.IMWRITE_JPEG_QUALITY), 60,  # Reduced quality
+                    int(cv2.IMWRITE_JPEG_OPTIMIZE), 1,  # Enable JPEG optimization
+                    int(cv2.IMWRITE_JPEG_PROGRESSIVE), 1  # Enable progressive JPEG
+                ]
                 _, buffer = cv2.imencode('.jpg', frame_to_encode, encode_params)
                 frame_bytes = buffer.tobytes()
                 
@@ -225,12 +245,10 @@ def start_detection():
             'message': 'Detection is already running'
         }), 400
     
-    # Get settings from request body
     try:
         settings = request.json
         logger.info(f"Received start request with settings: {settings}")
         
-        # Validate that camera URL is provided
         if not settings.get('ipCameraUrl'):
             logger.error("No camera URL provided in start request")
             return jsonify({
@@ -238,36 +256,20 @@ def start_detection():
                 'message': 'Camera URL is required'
             }), 400
         
-        # If NTFY topic is provided but empty, warn the user
-        if 'ntfyTopic' in settings and not settings.get('ntfyTopic'):
-            logger.warning("Empty NTFY topic provided - notifications will not be sent")
-            
-        # Check if person detection notification is enabled
-        settings['enablePersonDetection'] = settings.get('enablePersonDetection', True)
-        if settings['enablePersonDetection']:
-            logger.info("Person detection notifications are enabled")
+        # Force person detection only
+        settings['classes'] = [0]  # Class 0 is person in COCO dataset
+        settings['conf_threshold'] = 0.3  # Lower confidence threshold for faster detection
+        settings['enablePersonDetection'] = True
         
-        # Extract user ID from Supabase auth if available
-        if request.headers.get('Authorization'):
-            auth_token = request.headers.get('Authorization').replace('Bearer ', '')
-            # In a real app, you would validate this token with Supabase
-            # and extract the user ID
-            settings['userId'] = 'user-from-token'
-            
         # Start detection with settings
         success, message = detector.start_detection(settings)
         
         if success:
             detection_active = True
-            # Save the current settings for potential restart
             current_settings = settings.copy()
-            
-            # Start monitoring thread if not already running
             start_monitoring()
-            
-            # Register callback to receive frames
             detector.set_frame_callback(update_latest_frame)
-            logger.info("Detection started successfully")
+            logger.info("Detection started successfully with person-only mode")
             
             return jsonify({
                 'success': True,
@@ -282,19 +284,95 @@ def start_detection():
             
     except Exception as e:
         logger.exception(f"Error starting detection: {str(e)}")
-        # Ensure detection is marked as stopped if an error occurs
         detection_active = False
         return jsonify({
             'success': False,
             'message': f"Server error: {str(e)}"
         }), 500
 
+def send_ntfy_notification(topic, message, title="Person Detected", priority="high", tags="warning,person"):
+    """Send notification to NTFY"""
+    try:
+        if not topic:
+            logger.warning("No NTFY topic provided, skipping notification")
+            return False
+            
+        # Get the IP camera URL from current settings
+        camera_url = current_settings.get('ipCameraUrl') if current_settings else "Camera URL not available"
+        camera_port = current_settings.get('ipCameraPort', '') if current_settings else ''
+        
+        # Construct the full camera URL with port
+        if camera_url and camera_port:
+            if not camera_url.startswith(('http://', 'https://')):
+                camera_url = f"http://{camera_url}"
+            camera_url = f"{camera_url}:{camera_port}/video"
+        
+        # Construct the notification message with camera URL
+        full_message = f"{message}\n\nCamera Stream: {camera_url}"
+        
+        headers = {
+            "Title": title,
+            "Priority": priority,
+            "Tags": tags,
+            "Click": camera_url  # Make the notification clickable with the camera URL
+        }
+        
+        response = requests.post(
+            f"https://ntfy.sh/{topic}",
+            data=full_message.encode('utf-8'),
+            headers=headers
+        )
+        
+        if response.status_code == 200:
+            logger.info(f"Successfully sent NTFY notification to topic {topic}")
+            return True
+        else:
+            logger.error(f"Failed to send NTFY notification. Status code: {response.status_code}")
+            return False
+            
+    except Exception as e:
+        logger.exception(f"Error sending NTFY notification: {str(e)}")
+        return False
+
 def update_latest_frame(frame_with_boxes):
     """Callback function to update the latest frame"""
     global latest_frame
     try:
+        # Resize frame before storing if it's too large
+        height, width = frame_with_boxes.shape[:2]
+        if width > 640 or height > 480:
+            scale = min(640/width, 480/height)
+            new_width = int(width * scale)
+            new_height = int(height * scale)
+            frame_with_boxes = cv2.resize(frame_with_boxes, (new_width, new_height))
+            
         with latest_frame_lock:
             latest_frame = frame_with_boxes
+            
+        # Send NTFY notification if person is detected
+        if current_settings and current_settings.get('enablePersonDetection'):
+            ntfy_topic = current_settings.get('ntfyTopic')
+            if ntfy_topic:
+                send_ntfy_notification(
+                    topic=ntfy_topic,
+                    message="Person detected in camera feed",
+                    title="Person Detected",
+                    priority="high",
+                    tags="warning,person"
+                )
+
+        # Create detection event data
+        detection_data = {
+            'user_id': current_settings.get('userId'),
+            'object_type': 'person',
+            'confidence': float(frame_with_boxes[frame_with_boxes.shape[0] // 2, frame_with_boxes.shape[1] // 2, 2]),
+            'created_at': datetime.utcnow(),
+            'person_count': 1  # Add person count
+        }
+        
+        # Save to MongoDB and emit to clients
+        emit_and_save_detection(detection_data)
+            
     except Exception as e:
         logger.exception(f"Error updating frame: {str(e)}")
 
@@ -607,13 +685,132 @@ def update_password(current_user):
             'error': str(e)
         }), 500
 
+@socketio.on('connect')
+def handle_connect():
+    logger.info('Client connected to SocketIO')
+
+def emit_and_save_detection(detection_data):
+    db.detection_events.insert_one(detection_data)
+    socketio.emit('new_detection', detection_data)
+
+@app.route('/api/user/profile', methods=['GET'])
+@token_required
+def get_user_profile(current_user):
+    try:
+        # Log the token payload for debugging
+        logger.info(f"Token payload in get_user_profile: {current_user}")
+        
+        # Get user ID from token payload
+        user_id = current_user.get('userId')
+        if not user_id:
+            return jsonify({'success': False, 'error': 'Invalid token payload'}), 401
+        
+        # Log the user ID and query
+        logger.info(f"Looking up user with ID: {user_id}")
+        query = {'_id': ObjectId(user_id)}
+        logger.info(f"MongoDB query: {query}")
+        
+        # Check if the users collection exists
+        collections = db.list_collection_names()
+        logger.info(f"Available collections: {collections}")
+        
+        user = db.users.find_one(query)
+        logger.info(f"Query result: {user}")
+        
+        if not user:
+            return jsonify({'success': False, 'error': 'User not found'}), 404
+        
+        return jsonify({
+            'success': True,
+            'data': {
+                'name': user.get('name', ''),
+                'email': user.get('email', '')
+            }
+        })
+    except Exception as e:
+        logger.error(f"Error fetching user profile: {str(e)}")
+        logger.exception("Full traceback:")
+        return jsonify({'success': False, 'error': 'Failed to fetch user profile'}), 500
+
+@app.route('/api/user/profile', methods=['PUT'])
+@token_required
+def update_user_profile(current_user):
+    try:
+        # Log the token payload for debugging
+        logger.info(f"Token payload in update_user_profile: {current_user}")
+        
+        # Get user ID from token payload
+        user_id = current_user.get('userId')
+        if not user_id:
+            logger.error("No userId in token payload")
+            return jsonify({'success': False, 'error': 'Invalid token payload'}), 401
+        
+        # Log the request data
+        data = request.get_json()
+        logger.info(f"Update profile request data: {data}")
+        
+        # Validate required fields
+        if not data:
+            logger.error("No data in request body")
+            return jsonify({'success': False, 'error': 'No data provided'}), 400
+            
+        if not data.get('name'):
+            logger.error("Name is missing in request")
+            return jsonify({'success': False, 'error': 'Name is required'}), 400
+            
+        if not data.get('email'):
+            logger.error("Email is missing in request")
+            return jsonify({'success': False, 'error': 'Email is required'}), 400
+        
+        # Validate email format
+        if not re.match(r"[^@]+@[^@]+\.[^@]+", data['email']):
+            logger.error(f"Invalid email format: {data['email']}")
+            return jsonify({'success': False, 'error': 'Invalid email format'}), 400
+        
+        # Check if email is already taken by another user
+        existing_user = db.users.find_one({
+            'email': data['email'],
+            '_id': {'$ne': ObjectId(user_id)}
+        })
+        
+        if existing_user:
+            logger.error(f"Email already in use: {data['email']}")
+            return jsonify({'success': False, 'error': 'Email already in use'}), 400
+        
+        # Log the update query
+        update_query = {
+            '_id': ObjectId(user_id)
+        }
+        update_data = {
+            '$set': {
+                'name': data['name'],
+                'email': data['email']
+            }
+        }
+        logger.info(f"Update query: {update_query}")
+        logger.info(f"Update data: {update_data}")
+        
+        # Update user profile
+        result = db.users.update_one(update_query, update_data)
+        
+        logger.info(f"Update result: {result.raw_result}")
+        
+        if result.modified_count == 0:
+            logger.error("No changes made to user profile")
+            return jsonify({'success': False, 'error': 'No changes made'}), 400
+        
+        return jsonify({
+            'success': True,
+            'message': 'Profile updated successfully'
+        })
+    except Exception as e:
+        logger.error(f"Error updating user profile: {str(e)}")
+        logger.exception("Full traceback:")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 if __name__ == '__main__':
     # Preload the model
     detector.load_model()
     
     # Start the Flask server
-    app.run(
-        host='0.0.0.0',
-        port=config.FLASK_PORT,
-        debug=config.DEBUG
-    ) 
+    socketio.run(app, host=config.FLASK_HOST, port=config.FLASK_PORT, debug=config.DEBUG) 

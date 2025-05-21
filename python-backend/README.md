@@ -1,10 +1,10 @@
 # Object Detection Backend
 
-This is the Python backend for the Object Detection Dashboard. It uses YOLOv11m for object detection from IP camera feeds and provides APIs for the frontend to control detection sessions.
+This is the Python backend for the Object Detection Dashboard. It uses YOLOv8n for object detection from IP camera feeds and provides APIs for the frontend to control detection sessions.
 
 ## Features
 
-- YOLOv11m object detection model integration
+- YOLOv8n object detection model integration
 - IP camera feed processing
 - NTFY.sh notification integration
 - Supabase logging integration
@@ -16,11 +16,11 @@ This is the Python backend for the Object Detection Dashboard. It uses YOLOv11m 
 
 - Python 3.8+
 - pip
-- Your YOLOv11m.pt model file
+- Your YOLOv8n.pt model file
 
 ### Installation
 
-1. Place your `yolo11m.pt` model file in this directory.
+1. Place your `yolov8n.pt` model file in this directory.
 
 2. Install dependencies:
 
@@ -47,7 +47,7 @@ The backend exposes the following API endpoints:
 You can configure the backend by modifying the `config.py` file or by setting environment variables:
 
 - `FLASK_PORT` - Port for the Flask server (default: 5000)
-- `MODEL_PATH` - Path to the YOLOv11m model file (default: yolo11m.pt)
+- `MODEL_PATH` - Path to the YOLOv8n model file (default: yolov8n.pt)
 - `CONFIDENCE_THRESHOLD` - Confidence threshold for detections (default: 0.5)
 - `DETECTION_INTERVAL` - Seconds between detection runs (default: 1.0)
 - `NTFY_BASE_URL` - Base URL for NTFY notifications (default: https://ntfy.sh)
@@ -64,7 +64,7 @@ The frontend sends configuration to the backend when starting a detection sessio
 
 Common issues:
 
-1. **Model not found**: Ensure your `yolo11m.pt` file is in the same directory as the app.py file.
+1. **Model not found**: Ensure your `yolov8n.pt` file is in the same directory as the app.py file.
 
 2. **Camera connection issues**: Verify your IP camera URL and port are correct. Make sure the camera is accessible from the server running the backend.
 
